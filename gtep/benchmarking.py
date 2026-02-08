@@ -73,8 +73,8 @@ mod_object.config["transmission"] = True
 mod_object.config["storage"] = storage_investment
 mod_object.config["flow_model"] = flow_model
 
-mod_object.config["thermal_investment"] = thermal_investment
-mod_object.config["renewable_investment"] = renewable_investment
+# mod_object.config["thermal_investment"] = thermal_investment
+# mod_object.config["renewable_investment"] = renewable_investment
 mod_object.create_model()
 
 with open(log_folder + "/timer.log", "a") as fil:

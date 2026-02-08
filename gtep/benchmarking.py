@@ -41,6 +41,9 @@ if len(sys.argv) > 1:
 else:
     pass
 
+if not os.path.exists(log_folder):
+    os.makedirs(log_folder)
+
 with open(log_folder + "/input.log", "w") as fil:
     fil.write(str(i for i in sys.argv))
 

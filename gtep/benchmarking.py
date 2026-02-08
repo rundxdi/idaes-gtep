@@ -104,7 +104,7 @@ mod_object.timer.toc(
 mod_object.results = opt.solve(
     mod_object.model,
     tee=True,
-    solver_options={"LogFile": log_folder + "t2k_logging.log", "MIPGap": 0.01},
+    solver_options={"LogFile": log_folder + "/gurobi.log", "MIPGap": 0.01},
 )
 
 # mod_object.model.write('bad_sol.sol')

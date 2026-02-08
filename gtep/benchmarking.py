@@ -26,17 +26,17 @@ import json
 gc.disable()
 
 if len(sys.argv) > 1:
-    num_investment_periods = sys.argv[1]
-    num_representative_periods = sys.argv[2]
-    length_representative_periods = sys.argv[3]
-    num_commitment_periods = sys.argv[4]
-    num_dispatch_periods = sys.argv[5]
-    thermal_investment = sys.argv[6]
-    renewable_investment = sys.argv[7]
-    storage_investment = sys.argv[8]
+    num_investment_periods = int(sys.argv[1])
+    num_representative_periods = int(sys.argv[2])
+    length_representative_periods = int(sys.argv[3])
+    num_commitment_periods = int(sys.argv[4])
+    num_dispatch_periods = int(sys.argv[5])
+    thermal_investment = bool(sys.argv[6])
+    renewable_investment = bool(sys.argv[7])
+    storage_investment = bool(sys.argv[8])
     flow_model = sys.argv[9]
-    unit_commitment = sys.argv[10]
-    dispatch = sys.argv[11]
+    unit_commitment = bool(sys.argv[10])
+    dispatch = bool(sys.argv[11])
     log_folder = sys.argv[12]
 else:
     pass

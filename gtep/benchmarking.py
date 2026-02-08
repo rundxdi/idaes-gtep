@@ -41,6 +41,9 @@ if len(sys.argv) > 1:
 else:
     pass
 
+with open(log_folder + "/input.log", "w") as fil:
+    fil.write(str(i for i in sys.argv))
+
 data_path = "./gtep/data/Texas_2000"
 data_object = ExpansionPlanningData()
 data_object.load_prescient(data_path, length_representative_periods)
@@ -55,7 +58,7 @@ data_object.texas_case_study_updates(data_path)
 ## Change num_reps from 4 to 5 to include extreme days
 
 mod_object = ExpansionPlanningModel(
-    stages=num_investment_periods, data=data_object, num_reps=num_representative_periods, len_reps=length_representative_periods, num_commit=num_commitment_periods, num_dispatch=num_dispatch_periods
+    stages=num_investment_periods, data=data_object, num_reps=num_representative_periods, len_reps=length_representative_periods, num_commit=num_commitment_periods, num_dispatch=num_dispatch_periods, duration_dispatch=60
 )
 # print(mod_object.data.data["elements"]["generator"]["1"])
 # import sys

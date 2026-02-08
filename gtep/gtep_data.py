@@ -94,7 +94,6 @@ class ExpansionPlanningData:
         ## Change the last date for whatever extreme day is needed based on the given run(s)
 
         time_keys = self.md.data["system"]["time_keys"]
-        print(time_keys)
         self.representative_dates = [
             "2016-01-28 00:00",
             "2016-04-23 00:00",
@@ -114,7 +113,7 @@ class ExpansionPlanningData:
         # self.representative_weights = {1:1}
         for date in self.representative_dates:
             key_idx = time_keys.index(date)
-            time_key_set = time_keys[key_idx : key_idx + len_rep_per]
+            time_key_set = time_keys[key_idx : key_idx + int(len_rep_per)]
             data_list.append(self.md.clone_at_time_keys(time_key_set))
 
         self.representative_data = data_list

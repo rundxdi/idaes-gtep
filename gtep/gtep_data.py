@@ -94,6 +94,7 @@ class ExpansionPlanningData:
         ## Change the last date for whatever extreme day is needed based on the given run(s)
 
         time_keys = self.md.data["system"]["time_keys"]
+        print(time_keys)
         self.representative_dates = [
             "2016-01-28 00:00",
             "2016-04-23 00:00",

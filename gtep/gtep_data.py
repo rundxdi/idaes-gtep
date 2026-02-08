@@ -106,8 +106,10 @@ class ExpansionPlanningData:
         ## but we'll want something similar just less insane in the future
         if len(self.representative_dates) == 5:
             self.representative_weights = {1: 91, 2: 91, 3: 91, 4: 91, 5: 1}
-        else:
+        elif len(self.representative_dates) == 4:
             self.representative_weights = {1: 91, 2: 91, 3: 91, 4: 91}
+        else: 
+            self.representative_weights = {i : 365/len(self.representative_dates) for i in range(len(self.representative_dates))}
         # self.representative_weights = {1:1}
         for date in self.representative_dates:
             key_idx = time_keys.index(date)

@@ -2032,7 +2032,7 @@ def commitment_period_rule(b, commitment_period):
             m.md.data["elements"]["load"][load_n]["bus"]: m.md.data["elements"]["load"][
                 load_n
             ]["p_load"]["values"][commitment_period - 1]
-            * b.load_scaling[m.md.data["elements"]["load"][load_n]["zone"]].iloc[0]
+            * r_p.load_scaling[m.md.data["elements"]["load"][load_n]["zone"]].iloc[0]
             for load_n in m.md.data["elements"]["load"]
         }
         # Testing
@@ -2334,9 +2334,9 @@ def representative_period_rule(b, representative_period):
     broken_date = list(re.split(r"[-: ]", b.representative_date))
     b.month = int(broken_date[1])
     b.day = int(broken_date[2])
-    b.load_scaling = i_s.load_scaling[
-       (i_s.load_scaling["month"] == b.month) & (i_s.load_scaling["day"] == b.day)
-    ]
+    # b.load_scaling = i_s.load_scaling[
+    #    (i_s.load_scaling["month"] == b.month) & (i_s.load_scaling["day"] == b.day)
+    # ]
 
     b.currentPeriod = representative_period
 

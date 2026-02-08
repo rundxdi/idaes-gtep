@@ -99,7 +99,7 @@ class ExpansionPlanningData:
             "2019-04-23 00:00",
             "2019-07-05 00:00",
             "2019-10-14 00:00",
-        ]
+        ] 
 
         ## FIXME:
         ## RESIL WEEK ONLY

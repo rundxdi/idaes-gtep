@@ -30,7 +30,7 @@ class ExpansionPlanningData:
     def __init__(self):
         pass
 
-    def load_prescient(self, data_path, options_dict=None):
+    def load_prescient(self, data_path, len_rep_per, options_dict=None):
         """Loads data structured via Prescient data loader.
 
         :param data_path: Folder containing the data to be loaded
@@ -111,7 +111,7 @@ class ExpansionPlanningData:
         # self.representative_weights = {1:1}
         for date in self.representative_dates:
             key_idx = time_keys.index(date)
-            time_key_set = time_keys[key_idx : key_idx + 24]
+            time_key_set = time_keys[key_idx : key_idx + len_rep_per]
             data_list.append(self.md.clone_at_time_keys(time_key_set))
 
         self.representative_data = data_list

@@ -15,6 +15,7 @@ from gtep.gtep_model import ExpansionPlanningModel
 from gtep.gtep_data import ExpansionPlanningData
 from gtep.gtep_solution import ExpansionPlanningSolution
 from pyomo.core import TransformationFactory
+from pyomo.core.base.expression import ScalarExpression, IndexedExpression
 from pyomo.environ import SolverFactory
 import gc
 import sys
@@ -28,20 +29,21 @@ if len(sys.argv) > 1:
     num_investment_periods = sys.argv[1]
     num_representative_periods = sys.argv[2]
     length_representative_periods = sys.argv[3]
-    num_dispatch_periods = sys.argv[4]
-    thermal_investment = sys.argv[5]
-    renewable_investment = sys.argv[6]
-    storage_investment = sys.argv[7]
-    flow_model = sys.argv[8]
-    unit_commitment = sys.argv[9]
-    dispatch = sys.argv[10]
-    log_folder = sys.argv[11]
+    num_commitment_periods = sys.argv[4]
+    num_dispatch_periods = sys.argv[5]
+    thermal_investment = sys.argv[6]
+    renewable_investment = sys.argv[7]
+    storage_investment = sys.argv[8]
+    flow_model = sys.argv[9]
+    unit_commitment = sys.argv[10]
+    dispatch = sys.argv[11]
+    log_folder = sys.argv[12]
 else:
     pass
 
 data_path = "./gtep/data/Texas_2000"
 data_object = ExpansionPlanningData()
-data_object.load_prescient(data_path)
+data_object.load_prescient(data_path, length_representative_periods)
 
 load_scaling_path = data_path + "/ERCOT-Adjusted-Forecast.xlsb"
 data_object.import_load_scaling(load_scaling_path)
@@ -53,47 +55,44 @@ data_object.texas_case_study_updates(data_path)
 ## Change num_reps from 4 to 5 to include extreme days
 
 mod_object = ExpansionPlanningModel(
-    stages=3, data=data_object, num_reps=4, len_reps=24, num_commit=24, num_dispatch=1
+    stages=num_investment_periods, data=data_object, num_reps=num_representative_periods, len_reps=length_representative_periods, num_commit=num_commitment_periods, num_dispatch=num_dispatch_periods
 )
 # print(mod_object.data.data["elements"]["generator"]["1"])
 # import sys
 # sys.exit()
-mod_object.config["include_investment"] = True
+mod_object.config["include_investment"] = True 
 mod_object.config["scale_loads"] = False
 mod_object.config["scale_texas_loads"] = True
 mod_object.config["transmission"] = True
+mod_object.config["storage"] = storage_investment
+mod_object.config["flow_model"] = flow_model
 
-mod_object.config["flow_model"] = "DC"
-
-# mod_object.config["thermal_investment"] = True
-# mod_object.config["renewable_investment"] = True
+mod_object.config["thermal_investment"] = thermal_investment
+mod_object.config["renewable_investment"] = renewable_investment
 mod_object.create_model()
-mod_object.timer.toc("Model Created")
+
+with open(log_folder + "/timer.log", "a") as fil:
+    mod_object.timer.toc("Model Created", ostream=fil)
 
 
 # TransformationFactory("gdp.bound_pretransformation").apply_to(mod_object.model)
-mod_object.timer.toc("double horrible")
+# mod_object.timer.toc("double horrible")
 
 TransformationFactory("gdp.bigm").apply_to(mod_object.model)
-mod_object.timer.toc("triple horrible")
+with open(log_folder + "/timer.log", "a") as fil:
+    mod_object.timer.toc("Model Solved", ostream = fil)
 
 # import sys
 # sys.exit()
 
 opt = SolverFactory("gurobi_direct_v2")
-# opt = Gurobi()
-# opt = GurobiDirect()
-mod_object.timer.toc("Actually, I think this is garbage collection")
-# opt.gurobi_options['LogFile'] = "basic_logging.log"
-# opt.gurobi_options['LogToConsole'] = 1
-# opt = Highs()
 mod_object.timer.toc(
     "let's start to solve -- this is really the start of the handoff to gurobi"
 )
 mod_object.results = opt.solve(
     mod_object.model,
     tee=True,
-    solver_options={"LogFile": "t2k_logging.log", "MIPGap": 0.01},
+    solver_options={"LogFile": log_folder + "t2k_logging.log", "MIPGap": 0.01},
 )
 
 # mod_object.model.write('bad_sol.sol')
@@ -101,8 +100,8 @@ mod_object.results = opt.solve(
 
 # import sys
 # sys.exit()
-
-mod_object.timer.toc("we've solved, let's pull investment variables")
+with open(log_folder + "/timer.log", "a") as fil:
+    mod_object.timer.toc("Model Solved", ostream=fil)
 import pyomo.environ as pyo
 import pyomo.gdp as gdp
 
@@ -118,7 +117,6 @@ for var in mod_object.model.component_objects(pyo.Var, descend_into=True):
                 load_shed[var.name + "." + str(index)] = pyo.value(var[index])
         for name in valid_names:
             if name in var.name:
-                # print(var, index, pyo.value(var[index]))
                 if pyo.value(var[index]) >= 0.001:
                     renewable_investments[var.name + "." + str(index)] = pyo.value(
                         var[index]
@@ -127,17 +125,19 @@ for var in mod_object.model.component_objects(gdp.Disjunct, descend_into=True):
     for index in var:
         for name in valid_names:
             if name in var.name:
-                # print(var.name)
-                # print(var, index, pyo.value(var[index].indicator_var))
                 if pyo.value(var[index].indicator_var) == True:
                     dispatchable_investments[var.name + "." + str(index)] = pyo.value(
                         var[index].indicator_var
                     )
 
-## RMA:
-## You may want to save a few more things from the Expressions
-
 costs = {}
+for exp in mod_object.model.component_objects(pyo.Expression, descend_into=True):
+    if "Cost" in exp.name or "cost" in exp.name:
+        if type(exp) is ScalarExpression:
+            costs[exp.name] = pyo.value(exp)
+        if type(exp) is IndexedExpression:
+            for e in exp:
+                costs[exp[e].name] = pyo.value(exp[e])
 
 folder_name = log_folder
 renewable_investment_name = folder_name + "/renewable_investments.json"
@@ -157,4 +157,5 @@ with open(load_shed_name, "w") as fil:
 with open(costs_name, "w") as fil:
     json.dump(costs, fil)
 
-mod_object.timer.toc("we've dumped; get everybody and the stuff together")
+with open(log_folder + "timer.log", "a") as fil:
+    mod_object.timer.toc("we've dumped; get everybody and the stuff together", ostream=fil)

@@ -36,6 +36,7 @@ if len(sys.argv) > 1:
     unit_commitment = sys.argv[9]
     dispatch = sys.argv[10]
     log_folder = sys.argv[11]
+    case_study = sys.argv[12]
 else:
     pass
 

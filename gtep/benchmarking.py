@@ -80,11 +80,11 @@ mod_object.create_model()
 with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Created", ostream=fil)
 
-with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
-    used_gb = used_bytes / (1024**3)
-    fil.write(f"Model created \n Total used memory: {used_gb:.2f} GiB\n")
+# with open(log_folder + "/memory.log", "a") as fil:
+#     mem_info = psutil.virtual_memory()
+#     used_bytes = mem_info.used
+#     used_gb = used_bytes / (1024**3)
+#     fil.write(f"Model created \n Total used memory: {used_gb:.2f} GiB\n")
 
 
 # TransformationFactory("gdp.bound_pretransformation").apply_to(mod_object.model)
@@ -94,11 +94,11 @@ TransformationFactory("gdp.bigm").apply_to(mod_object.model)
 with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Solved", ostream = fil)
 
-with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
-    used_gb = used_bytes / (1024**3)
-    fil.write(f"Model transformed \n Total used memory: {used_gb:.2f} GiB\n")
+# with open(log_folder + "/memory.log", "a") as fil:
+#     mem_info = psutil.virtual_memory()
+#     used_bytes = mem_info.used
+#     used_gb = used_bytes / (1024**3)
+#     fil.write(f"Model transformed \n Total used memory: {used_gb:.2f} GiB\n")
 
 # import sys
 # sys.exit()
@@ -120,11 +120,11 @@ mod_object.results = opt.solve(
 # sys.exit()
 with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Solved", ostream=fil)
-with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
-    used_gb = used_bytes / (1024**3)
-    fil.write(f"Model solved \n Total used memory: {used_gb:.2f} GiB\n")
+# with open(log_folder + "/memory.log", "a") as fil:
+#     mem_info = psutil.virtual_memory()
+#     used_bytes = mem_info.used
+#     used_gb = used_bytes / (1024**3)
+#     fil.write(f"Model solved \n Total used memory: {used_gb:.2f} GiB\n")
 import pyomo.environ as pyo
 import pyomo.gdp as gdp
 
@@ -183,8 +183,8 @@ with open(costs_name, "w") as fil:
 with open(log_folder + "timer.log", "a") as fil:
     mod_object.timer.toc("we've dumped; get everybody and the stuff together", ostream=fil)
 
-with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
-    used_gb = used_bytes / (1024**3)
-    fil.write(f"Model dumped \n Total used memory: {used_gb:.2f} GiB\n")
+# with open(log_folder + "/memory.log", "a") as fil:
+#     mem_info = psutil.virtual_memory()
+#     used_bytes = mem_info.used
+#     used_gb = used_bytes / (1024**3)
+#     fil.write(f"Model dumped \n Total used memory: {used_gb:.2f} GiB\n")

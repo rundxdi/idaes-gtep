@@ -2335,7 +2335,7 @@ def representative_period_rule(b, representative_period):
     b.month = int(broken_date[1])
     b.day = int(broken_date[2])
     b.load_scaling = i_s.load_scaling[
-       (i_s.load_scaling["month"] >= b.month) & (i_s.load_scaling["day"] >= b.day)
+       (i_s.load_scaling["month"] >= b.month) & (i_s.load_scaling["month"] <= b.month + 1) & (i_s.load_scaling["day"] >= b.day) & (i_s.load_scaling["day"] <= b.day + 5)
     ]
 
     b.currentPeriod = representative_period

@@ -30,7 +30,7 @@ class ExpansionPlanningData:
     def __init__(self):
         pass
 
-    def load_prescient(self, data_path, options_dict=None):
+    def load_prescient(self, data_path, len_rep_per, options_dict=None):
         """Loads data structured via Prescient data loader.
 
         :param data_path: Folder containing the data to be loaded
@@ -40,7 +40,7 @@ class ExpansionPlanningData:
         options_dict = {
             "data_path": data_path,
             "input_format": "rts-gmlc",
-            "start_date": "01-01-2020",
+            "start_date": "01-01-2016",
             "num_days": 365,
             "sced_horizon": 1,
             "sced_frequency_minutes": 60,
@@ -52,7 +52,7 @@ class ExpansionPlanningData:
         # Use prescient data provider to load in sequential data for representative periods
         data_list = []
 
-        x = datetime.datetime(2020, 1, 1)
+        x = datetime.datetime(2016, 1, 1)
         data_provider = gmlc_data_provider.GmlcDataProvider(options=prescient_options)
         # populate an egret model data with the basic stuff
         self.md = data_provider.get_initial_actuals_model(
@@ -95,23 +95,26 @@ class ExpansionPlanningData:
 
         time_keys = self.md.data["system"]["time_keys"]
         self.representative_dates = [
-            "2020-01-28 00:00",
-            "2020-04-23 00:00",
-            "2020-07-05 00:00",
-            "2020-10-14 00:00",
-        ]
+            "2016-01-28 00:00",
+            "2016-04-23 00:00",
+            "2016-07-05 00:00",
+            "2016-10-14 00:00",
+            "2016-07-28 00:00"
+        ] 
 
         ## FIXME:
         ## RESIL WEEK ONLY
         ## but we'll want something similar just less insane in the future
         if len(self.representative_dates) == 5:
             self.representative_weights = {1: 91, 2: 91, 3: 91, 4: 91, 5: 1}
-        else:
+        elif len(self.representative_dates) == 4:
             self.representative_weights = {1: 91, 2: 91, 3: 91, 4: 91}
+        else: 
+            self.representative_weights = {i : 365/len(self.representative_dates) for i in range(len(self.representative_dates))}
         # self.representative_weights = {1:1}
         for date in self.representative_dates:
             key_idx = time_keys.index(date)
-            time_key_set = time_keys[key_idx : key_idx + 24]
+            time_key_set = time_keys[key_idx : key_idx + int(len_rep_per)]
             data_list.append(self.md.clone_at_time_keys(time_key_set))
 
         self.representative_data = data_list

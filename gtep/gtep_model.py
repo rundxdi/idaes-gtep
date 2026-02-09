@@ -1357,7 +1357,6 @@ def add_commitment_variables(b, commitment_period):
     @b.Disjunct(m.thermalGenerators)
     def genOn(disj, generator):
         # operating limits
-        ## NOTE: Reminder: thermalMin is a percentage of thermalCapacity
         b = disj.parent_block()
 
         @disj.Constraint(b.dispatchPeriods, doc="Minimum operating limits")
@@ -1445,8 +1444,6 @@ def add_commitment_variables(b, commitment_period):
     def genStartup(disj, generator):
         b = disj.parent_block()
 
-        # (Original) NOTE: Reminder: thermalMin is a percentage of
-        # thermalCapacity
         @disj.Constraint(b.dispatchPeriods, doc="Operating limits")
         def operating_limit_min(d, dispatchPeriod):
             return 0 <= b.dispatchPeriod[dispatchPeriod].thermalGeneration[generator]
@@ -1468,32 +1465,32 @@ def add_commitment_variables(b, commitment_period):
         )
         def ramp_up_limits(disj, dispatchPeriod, generator):
             if dispatchPeriod != 1 and commitment_period != 1:
-                return (
-                    b.dispatchPeriod[dispatchPeriod].thermalGeneration[generator]
-                    - b.dispatchPeriod[dispatchPeriod - 1].thermalGeneration[generator]
-                    <= max(
-                        pyo.value(m.thermalMin[generator]),
-                        # [ESR: Make sure the time units are consistent
-                        # here since we are only taking the value]
-                        pyo.value(m.rampUpRates[generator])
-                        * pyo.value(b.dispatchPeriod[dispatchPeriod].periodLength),
-                    )
-                    * m.thermalCapacity[generator]
+                return b.dispatchPeriod[dispatchPeriod].thermalGeneration[
+                    generator
+                ] - b.dispatchPeriod[dispatchPeriod - 1].thermalGeneration[
+                    generator
+                ] <= max(
+                    pyo.value(m.thermalMin[generator]),
+                    # [ESR: Make sure the time units are consistent
+                    # here since we are only taking the value]
+                    pyo.value(m.rampUpRates[generator])
+                    * b.dispatchPeriod[dispatchPeriod].periodLength
+                    * pyo.value(m.thermalCapacity[generator]),
                 )
             elif dispatchPeriod == 1 and commitment_period != 1:
-                return (
-                    b.dispatchPeriod[dispatchPeriod].thermalGeneration[generator]
-                    - r_p.commitmentPeriod[commitment_period - 1]
-                    .dispatchPeriod[b.dispatchPeriods.last()]
-                    .thermalGeneration[generator]
-                    <= max(
-                        pyo.value(m.thermalMin[generator]),
-                        # [ESR: Make sure the time units are consistent
-                        # here since we are only taking the value]
-                        pyo.value(m.rampUpRates[generator])
-                        * pyo.value(b.dispatchPeriod[dispatchPeriod].periodLength),
-                    )
-                    * m.thermalCapacity[generator]
+                return b.dispatchPeriod[dispatchPeriod].thermalGeneration[
+                    generator
+                ] - r_p.commitmentPeriod[commitment_period - 1].dispatchPeriod[
+                    b.dispatchPeriods.last()
+                ].thermalGeneration[
+                    generator
+                ] <= max(
+                    pyo.value(m.thermalMin[generator]),
+                    # [ESR: Make sure the time units are consistent
+                    # here since we are only taking the value]
+                    pyo.value(m.rampUpRates[generator])
+                    * b.dispatchPeriod[dispatchPeriod].periodLength
+                    * pyo.value(m.thermalCapacity[generator]),
                 )
             else:
                 return pyo.Constraint.Skip
@@ -1503,7 +1500,6 @@ def add_commitment_variables(b, commitment_period):
         b = disj.parent_block()
 
         # operating limits
-        ## NOTE: Reminder: thermalMin is a percentage of thermalCapacity
         @disj.Constraint(b.dispatchPeriods)
         def operating_limit_min(d, dispatchPeriod):
             return (
@@ -1529,32 +1525,32 @@ def add_commitment_variables(b, commitment_period):
         @disj.Constraint(b.dispatchPeriods, m.thermalGenerators)
         def ramp_down_limits(disj, dispatchPeriod, generator):
             if dispatchPeriod != 1 and commitment_period != 1:
-                return (
-                    b.dispatchPeriod[dispatchPeriod - 1].thermalGeneration[generator]
-                    - b.dispatchPeriod[dispatchPeriod].thermalGeneration[generator]
-                    <= max(
-                        pyo.value(m.thermalMin[generator]),
-                        # [ESR: Make sure the time units are consistent
-                        # here since we are taking the value only]
-                        pyo.value(m.rampDownRates[generator])
-                        * b.dispatchPeriod[dispatchPeriod].periodLength,
-                    )
-                    * m.thermalCapacity[generator]
+                return b.dispatchPeriod[dispatchPeriod - 1].thermalGeneration[
+                    generator
+                ] - b.dispatchPeriod[dispatchPeriod].thermalGeneration[
+                    generator
+                ] <= max(
+                    pyo.value(m.thermalMin[generator]),
+                    # [ESR: Make sure the time units are consistent
+                    # here since we are taking the value only]
+                    pyo.value(m.rampDownRates[generator])
+                    * b.dispatchPeriod[dispatchPeriod].periodLength
+                    * pyo.value(m.thermalCapacity[generator]),
                 )
             elif dispatchPeriod == 1 and commitment_period != 1:
-                return (
-                    r_p.commitmentPeriod[commitment_period - 1]
-                    .dispatchPeriod[b.dispatchPeriods.last()]
-                    .thermalGeneration[generator]
-                    - b.dispatchPeriod[dispatchPeriod].thermalGeneration[generator]
-                    <= max(
-                        pyo.value(m.thermalMin[generator]),
-                        # [ESR: Make sure the time units are consistent
-                        # here since we are taking the value only]
-                        pyo.value(m.rampDownRates[generator])
-                        * b.dispatchPeriod[dispatchPeriod].periodLength,
-                    )
-                    * m.thermalCapacity[generator]
+                return r_p.commitmentPeriod[commitment_period - 1].dispatchPeriod[
+                    b.dispatchPeriods.last()
+                ].thermalGeneration[generator] - b.dispatchPeriod[
+                    dispatchPeriod
+                ].thermalGeneration[
+                    generator
+                ] <= max(
+                    pyo.value(m.thermalMin[generator]),
+                    # [ESR: Make sure the time units are consistent
+                    # here since we are taking the value only]
+                    pyo.value(m.rampDownRates[generator])
+                    * b.dispatchPeriod[dispatchPeriod].periodLength
+                    * pyo.value(m.thermalCapacity[generator]),
                 )
             else:
                 return pyo.Constraint.Skip
@@ -1564,7 +1560,6 @@ def add_commitment_variables(b, commitment_period):
         b = disj.parent_block()
 
         # operating limits
-        ## NOTE: Reminder: thermalMin is a percentage of thermalCapacity
         @disj.Constraint(b.dispatchPeriods)
         def operating_limit_max(disj, dispatchPeriod):
             return (
@@ -1625,7 +1620,6 @@ def add_storage_constraints(m, b, commitment_period):
     @b.Disjunct(m.storage)
     def storDischarging(disj, bat):
         # operating limits
-        ## NOTE: Reminder: thermalMin is a percentage of thermalCapacity
         b = disj.parent_block()
 
         # Minimum operating Limits if storage unit is on
@@ -1966,6 +1960,8 @@ def commitment_period_rule(b, commitment_period):
     r_p = b.parent_block()
     i_p = r_p.parent_block()
 
+    b.load_scaling = r_p.load_scaling.iloc[commitment_period - 1]
+
     b.commitmentPeriod = commitment_period
     b.commitmentPeriodLength = pyo.Param(
         within=pyo.PositiveReals, default=1, units=u.hr
@@ -2038,7 +2034,7 @@ def commitment_period_rule(b, commitment_period):
             m.md.data["elements"]["load"][load_n]["bus"]: m.md.data["elements"]["load"][
                 load_n
             ]["p_load"]["values"][commitment_period - 1]
-            * b.load_scaling[m.md.data["elements"]["load"][load_n]["zone"]].iloc[0]
+            * b.load_scaling[m.md.data["elements"]["load"][load_n]["zone"]]
             for load_n in m.md.data["elements"]["load"]
         }
         # Testing
@@ -2340,9 +2336,9 @@ def representative_period_rule(b, representative_period):
     broken_date = list(re.split(r"[-: ]", b.representative_date))
     b.month = int(broken_date[1])
     b.day = int(broken_date[2])
-    # b.load_scaling = i_s.load_scaling[
-    #    (i_s.load_scaling["month"] == b.month) & (i_s.load_scaling["day"] == b.day)
-    # ]
+    b.load_scaling = i_s.load_scaling[
+       (i_s.load_scaling["month"] >= b.month) & (i_s.load_scaling["month"] <= b.month + 1) & (i_s.load_scaling["day"] >= b.day) & (i_s.load_scaling["day"] <= b.day + 5)
+    ]
 
     b.currentPeriod = representative_period
 
@@ -2489,59 +2485,59 @@ def investment_stage_rule(b, investment_stage):
         kw_to_mw_option = 1000
         other_option = 1
         ##TEXAS: lmao this is garbage; generalize this
-        if investment_stage == 1:
-            b.fixedCost = pyo.Param(m.generators, initialize=m.fixedCost1)
-            b.varCost = pyo.Param(m.generators, initialize=m.varCost1)
-            b.fuelCost = pyo.Param(m.generators, initialize=m.fuelCost1)
-            thermalInvestmentCost = {
-                gen: other_option
-                * m.thermalCapacity[gen]
-                * m.md.data["elements"]["generator"][gen]["capex1"]
-                for gen in m.thermalGenerators
-            }
-            renewableInvestmentCost = {
-                gen: other_option
-                * m.renewableCapacityNameplate[gen]  # TODO: is Nameplate correct?
-                * m.md.data["elements"]["generator"][gen]["capex1"]
-                for gen in m.renewableGenerators
-            }
-            m.generatorInvestmentCost = thermalInvestmentCost | renewableInvestmentCost
-            print("gen investment cost")
-            print(sum(m.generatorInvestmentCost.values()))
-        elif investment_stage == 2:
-            b.fixedCost = pyo.Param(m.generators, initialize=m.fixedCost2)
-            b.varCost = pyo.Param(m.generators, initialize=m.varCost2)
-            b.fuelCost = pyo.Param(m.generators, initialize=m.fuelCost2)
-            thermalInvestmentCost = {
-                gen: other_option
-                * m.thermalCapacity[gen]
-                * m.md.data["elements"]["generator"][gen]["capex2"]
-                for gen in m.thermalGenerators
-            }
-            renewableInvestmentCost = {
-                gen: other_option
-                * m.renewableCapacityNameplate[gen]  # TODO: is Nameplate correct?
-                * m.md.data["elements"]["generator"][gen]["capex2"]
-                for gen in m.renewableGenerators
-            }
-            m.generatorInvestmentCost = thermalInvestmentCost | renewableInvestmentCost
-        else:
-            b.fixedCost = pyo.Param(m.generators, initialize=m.fixedCost3)
-            b.varCost = pyo.Param(m.generators, initialize=m.varCost3)
-            b.fuelCost = pyo.Param(m.generators, initialize=m.fuelCost3)
-            thermalInvestmentCost = {
-                gen: other_option
-                * m.thermalCapacity[gen]
-                * m.md.data["elements"]["generator"][gen]["capex3"]
-                for gen in m.thermalGenerators
-            }
-            renewableInvestmentCost = {
-                gen: other_option
-                * m.renewableCapacityNameplate[gen]  # TODO: is Nameplate correct?
-                * m.md.data["elements"]["generator"][gen]["capex3"]
-                for gen in m.renewableGenerators
-            }
-            m.generatorInvestmentCost = thermalInvestmentCost | renewableInvestmentCost
+        # if investment_stage == 1:
+        #     b.fixedCost = pyo.Param(m.generators, initialize=m.fixedCost1)
+        #     b.varCost = pyo.Param(m.generators, initialize=m.varCost1)
+        #     b.fuelCost = pyo.Param(m.generators, initialize=m.fuelCost1)
+        #     thermalInvestmentCost = {
+        #         gen: other_option
+        #         * m.thermalCapacity[gen]
+        #         * m.md.data["elements"]["generator"][gen]["capex1"]
+        #         for gen in m.thermalGenerators
+        #     }
+        #     renewableInvestmentCost = {
+        #         gen: other_option
+        #         * m.renewableCapacityNameplate[gen]  # TODO: is Nameplate correct?
+        #         * m.md.data["elements"]["generator"][gen]["capex1"]
+        #         for gen in m.renewableGenerators
+        #     }
+        #     m.generatorInvestmentCost = thermalInvestmentCost | renewableInvestmentCost
+        #     print("gen investment cost")
+        #     print(sum(m.generatorInvestmentCost.values()))
+        # elif investment_stage == 2:
+        #     b.fixedCost = pyo.Param(m.generators, initialize=m.fixedCost2)
+        #     b.varCost = pyo.Param(m.generators, initialize=m.varCost2)
+        #     b.fuelCost = pyo.Param(m.generators, initialize=m.fuelCost2)
+        #     thermalInvestmentCost = {
+        #         gen: other_option
+        #         * m.thermalCapacity[gen]
+        #         * m.md.data["elements"]["generator"][gen]["capex2"]
+        #         for gen in m.thermalGenerators
+        #     }
+        #     renewableInvestmentCost = {
+        #         gen: other_option
+        #         * m.renewableCapacityNameplate[gen]  # TODO: is Nameplate correct?
+        #         * m.md.data["elements"]["generator"][gen]["capex2"]
+        #         for gen in m.renewableGenerators
+        #     }
+        #     m.generatorInvestmentCost = thermalInvestmentCost | renewableInvestmentCost
+        # else:
+        #     b.fixedCost = pyo.Param(m.generators, initialize=m.fixedCost3)
+        #     b.varCost = pyo.Param(m.generators, initialize=m.varCost3)
+        #     b.fuelCost = pyo.Param(m.generators, initialize=m.fuelCost3)
+        #     thermalInvestmentCost = {
+        #         gen: other_option
+        #         * m.thermalCapacity[gen]
+        #         * m.md.data["elements"]["generator"][gen]["capex3"]
+        #         for gen in m.thermalGenerators
+        #     }
+        #     renewableInvestmentCost = {
+        #         gen: other_option
+        #         * m.renewableCapacityNameplate[gen]  # TODO: is Nameplate correct?
+        #         * m.md.data["elements"]["generator"][gen]["capex3"]
+        #         for gen in m.renewableGenerators
+        #     }
+        #     m.generatorInvestmentCost = thermalInvestmentCost | renewableInvestmentCost
 
     b.representativePeriods = [
         p

@@ -1960,6 +1960,8 @@ def commitment_period_rule(b, commitment_period):
     r_p = b.parent_block()
     i_p = r_p.parent_block()
 
+    b.load_scaling = r_p.load_scaling.iloc[commitment_period - 1]
+
     b.commitmentPeriod = commitment_period
     b.commitmentPeriodLength = pyo.Param(
         within=pyo.PositiveReals, default=1, units=u.hr
@@ -2032,7 +2034,7 @@ def commitment_period_rule(b, commitment_period):
             m.md.data["elements"]["load"][load_n]["bus"]: m.md.data["elements"]["load"][
                 load_n
             ]["p_load"]["values"][commitment_period - 1]
-            * r_p.load_scaling[m.md.data["elements"]["load"][load_n]["zone"]].iloc[0]
+            * b.load_scaling[m.md.data["elements"]["load"][load_n]["zone"]].iloc[0]
             for load_n in m.md.data["elements"]["load"]
         }
         # Testing

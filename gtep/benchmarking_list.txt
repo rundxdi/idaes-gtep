@@ -18,3 +18,5 @@ experiments
 (cee-32/ 7:12 2/8) python gtep/benchmarking.py 2 4 48 48 1 True True True DC True True testing_2_4_48_48_1_T_T_T_DC_T_T
 (cee-33/ 7:14 2/8) python gtep/benchmarking.py 2 4 60 60 1 True True True DC True True testing_2_4_60_60_1_T_T_T_DC_T_T
 (cee-34/ 7:14 2/8) python gtep/benchmarking.py 2 4 72 72 1 True True True DC True True testing_2_4_72_72_1_T_T_T_DC_T_T
+(cee-35/ 16:20 2/9) python gtep/benchmarking.py 2 4 24 12 2 True True True DC True True testing_2_4_24_12_2_T_T_T_DC_T_T
+(cee-36/ 6:20 2/9) python gtep/benchmarking.py 2 4 36 12 3 True True True DC True True testing_2_4_36_12_3_T_T_T_DC_T_T

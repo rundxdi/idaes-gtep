@@ -45,7 +45,8 @@ if not os.path.exists(log_folder):
     os.makedirs(log_folder)
 
 with open(log_folder + "/input.log", "w") as fil:
-    fil.write(str(i for i in sys.argv))
+    input_str = "".join([str(i) for i in sys.argv])
+    fil.write(input_str)
 
 data_path = "./gtep/data/Texas_2000"
 data_object = ExpansionPlanningData()
@@ -83,7 +84,7 @@ mod_object.config["flow_model"] = flow_model
 # mod_object.config["renewable_investment"] = renewable_investment
 mod_object.create_model()
 
-with open(log_folder + "/timer.log", "a") as fil:
+with open(log_folder + "/timer.log", "w") as fil:
     mod_object.timer.toc("Model Created", ostream=fil)
 
 # with open(log_folder + "/memory.log", "a") as fil:
@@ -98,7 +99,7 @@ with open(log_folder + "/timer.log", "a") as fil:
 
 TransformationFactory("gdp.bigm").apply_to(mod_object.model)
 with open(log_folder + "/timer.log", "a") as fil:
-    mod_object.timer.toc("Model Solved", ostream=fil)
+    mod_object.timer.toc("Model Transformed", ostream=fil)
 
 # with open(log_folder + "/memory.log", "a") as fil:
 #     mem_info = psutil.virtual_memory()

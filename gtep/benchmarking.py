@@ -19,7 +19,6 @@ from pyomo.core.base.expression import ScalarExpression, IndexedExpression
 from pyomo.environ import SolverFactory
 import gc
 import sys
-import psutil
 import os
 import json
 

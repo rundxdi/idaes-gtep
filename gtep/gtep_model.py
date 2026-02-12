@@ -1985,7 +1985,8 @@ def commitment_period_rule(b, commitment_period):
     r_p = b.parent_block()
     i_p = r_p.parent_block()
 
-    b.load_scaling = r_p.load_scaling.iloc[commitment_period - 1]
+    if m.config["scale_texas_loads"]:
+        b.load_scaling = r_p.load_scaling.iloc[commitment_period - 1]
 
     b.commitmentPeriod = commitment_period
     b.commitmentPeriodLength = pyo.Param(
@@ -2368,9 +2369,13 @@ def representative_period_rule(b, representative_period):
     broken_date = list(re.split(r"[-: ]", b.representative_date))
     b.month = int(broken_date[1])
     b.day = int(broken_date[2])
-    b.load_scaling = i_s.load_scaling[
-       (i_s.load_scaling["month"] >= b.month) & (i_s.load_scaling["month"] <= b.month + 1) & (i_s.load_scaling["day"] >= b.day) & (i_s.load_scaling["day"] <= b.day + 5)
-    ]
+    if m.config["scale_texas_loads"]:
+        b.load_scaling = i_s.load_scaling[
+            (i_s.load_scaling["month"] >= b.month)
+            & (i_s.load_scaling["month"] <= b.month + 1)
+            & (i_s.load_scaling["day"] >= b.day)
+            & (i_s.load_scaling["day"] <= b.day + 5)
+        ]
 
     b.currentPeriod = representative_period
 

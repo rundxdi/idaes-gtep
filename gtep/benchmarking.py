@@ -48,12 +48,13 @@ with open(log_folder + "/input.log", "w") as fil:
     input_str = "".join([str(i) for i in sys.argv])
     fil.write(input_str)
 
-data_path = "./gtep/data/Texas_2000"
+# data_path = "./gtep/data/Texas_2000"
+data_path = "./gtep/data/5bus"
 data_object = ExpansionPlanningData()
 data_object.load_prescient(data_path, length_representative_periods)
 
-load_scaling_path = data_path + "/ERCOT-Adjusted-Forecast.xlsb"
-data_object.import_load_scaling(load_scaling_path)
+# load_scaling_path = data_path + "/ERCOT-Adjusted-Forecast.xlsb"
+# data_object.import_load_scaling(load_scaling_path)
 # outage_path = data_path + "/may_20.csv"
 # data_object.import_outage_data(outage_path)
 
@@ -75,7 +76,7 @@ mod_object = ExpansionPlanningModel(
 # sys.exit()
 mod_object.config["include_investment"] = True
 mod_object.config["scale_loads"] = False
-mod_object.config["scale_texas_loads"] = True
+mod_object.config["scale_texas_loads"] = False
 mod_object.config["transmission"] = True
 mod_object.config["storage"] = storage_investment
 mod_object.config["flow_model"] = flow_model

@@ -22,6 +22,7 @@ import sys
 import os
 import json
 import psutil
+from gtep.gtep_data_processing import DataProcessing
 
 gc.disable()
 
@@ -48,8 +49,8 @@ with open(log_folder + "/input.log", "w") as fil:
     input_str = "".join([str(i) for i in sys.argv])
     fil.write(input_str)
 
-# data_path = "./gtep/data/Texas_2000"
-data_path = "./gtep/data/5bus"
+data_path = "./gtep/data/Texas_2000"
+# data_path = "./gtep/data/5bus"
 data_object = ExpansionPlanningData()
 data_object.load_prescient(data_path, length_representative_periods)
 
@@ -58,13 +59,32 @@ data_object.load_prescient(data_path, length_representative_periods)
 # outage_path = data_path + "/may_20.csv"
 # data_object.import_outage_data(outage_path)
 
-data_object.texas_case_study_updates(data_path)
+bus_data_path = "./gtep/data/costs/Bus_data_gen_weights_mappings.csv"
+cost_data_path = "./gtep/data/costs/2022_v3_Annual_Technology_Baseline_Workbook_Mid-year_update_2-15-2023_Clean.xlsx"
+candidate_gens = [
+    "Natural Gas_CT",
+    "Natural Gas_FE",
+    "Solar - Utility PV",
+    "Land-Based Wind",
+]
+
+data_processing_object = DataProcessing()
+data_processing_object.load_gen_data(
+    bus_data_path=bus_data_path,
+    cost_data_path=cost_data_path,
+    candidate_gens=candidate_gens,
+    save_csv=False,
+)
+
+
+# data_object.texas_case_study_updates(data_path)
 
 ## Change num_reps from 4 to 5 to include extreme days
 
 mod_object = ExpansionPlanningModel(
     stages=num_investment_periods,
     data=data_object,
+    cost_data=data_processing_object,
     num_reps=num_representative_periods,
     len_reps=length_representative_periods,
     num_commit=num_commitment_periods,
@@ -85,7 +105,7 @@ mod_object.config["flow_model"] = flow_model
 # mod_object.config["renewable_investment"] = renewable_investment
 mod_object.create_model()
 
-with open(log_folder + "/timer.log", "w") as fil:
+with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Created", ostream=fil)
 
 with open(log_folder + "/memory.log", "a") as fil:

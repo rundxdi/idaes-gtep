@@ -21,9 +21,9 @@ from gtep.gtep_solution import ExpansionPlanningSolution
 from gtep.gtep_data_processing import DataProcessing
 
 # Add data
-data_path = "./data/9_bus_GTEP_dir"
+data_path = "./gtep/data/5bus"
 data_object = ExpansionPlanningData()
-data_object.load_prescient(data_path)
+data_object.load_prescient(data_path, len_rep_per=24)
 
 # [ESR WIP: Add bus and cost data files to be used on the
 # DataProcessing class. This class processes data for the following
@@ -33,8 +33,8 @@ data_object.load_prescient(data_path)
 # types: (a) Natural Gas: Combustion Turbine (CT) and Fuel Efficiency
 # (FE) and (b) Solar: Utility PV and Concentrated Solar Power (CSP)
 
-bus_data_path = "data/costs/Bus_data_gen_weights_mappings.csv"
-cost_data_path = "data/costs/2022_v3_Annual_Technology_Baseline_Workbook_Mid-year_update_2-15-2023_Clean.xlsx"
+bus_data_path = "./gtep/data/costs/Bus_data_gen_weights_mappings.csv"
+cost_data_path = "./gtep/data/costs/2022_v3_Annual_Technology_Baseline_Workbook_Mid-year_update_2-15-2023_Clean.xlsx"
 candidate_gens = [
     "Natural Gas_CT",
     "Natural Gas_FE",
@@ -47,8 +47,9 @@ data_processing_object.load_gen_data(
     bus_data_path=bus_data_path,
     cost_data_path=cost_data_path,
     candidate_gens=candidate_gens,
-    save_csv=True,
+    save_csv=False,
 )
+
 
 # Populate and create GTEP model
 mod_object = ExpansionPlanningModel(

@@ -2082,7 +2082,7 @@ def commitment_period_rule(b, commitment_period):
         #     # print(f"{key=}")
         #     # print(f"{val=}")
         #     b.loads[key] *= 1/3
-        print(f"total load at time period = {sum(b.loads.values())}")
+        # print(f"total load at time period = {sum(b.loads.values())}")
 
     ## TODO: This feels REALLY inelegant and bad.
     ## TODO: Something weird happens if I say periodLength has a unit

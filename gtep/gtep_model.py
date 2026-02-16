@@ -2509,10 +2509,12 @@ def investment_stage_rule(b, investment_stage):
     # they depend on "fuelCost". NOTE: These were originally defined
     # as parameters in the function model_data_reference after
     # "fuelCost" was defined.]
-    m.curtailmentCost = 2 * max(
-        pyo.value(m.fuelCost[gen]) for gen in m.thermalGenerators
-    )
-    m.loadShedCostperCurtailment = 1000 * m.curtailmentCost
+    # m.curtailmentCost = 10
+    # m.loadShedCostperCurtailment = 10000
+    # m.curtailmentCost = 2 * max(
+    #     pyo.value(m.fuelCost[gen]) for gen in m.thermalGenerators
+    # )
+    # m.loadShedCostperCurtailment = 1000 * m.curtailmentCost
 
     ##########
 
@@ -3244,7 +3246,7 @@ def model_data_references(m):
         doc="Curtailment cost",
     )
     m.loadShedCostperCurtailment = pyo.Param(
-        initialize=1000,
+        initialize=10000,
         units=u.USD / (u.MW * u.hr),
         mutable=True,
     )

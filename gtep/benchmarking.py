@@ -109,8 +109,10 @@ with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Created", ostream=fil)
 
 with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
+    pid = os.getpid()
+    process = psutil.Process(pid)
+    mem_info = process.memory_info()
+    used_bytes = mem_info.rss
     used_gb = used_bytes / (1024**3)
     fil.write(f"Model created \n Total used memory: {used_gb:.2f} GiB\n")
 
@@ -123,8 +125,10 @@ with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Transformed", ostream=fil)
 
 with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
+    pid = os.getpid()
+    process = psutil.Process(pid)
+    mem_info = process.memory_info()
+    used_bytes = mem_info.rss
     used_gb = used_bytes / (1024**3)
     fil.write(f"Model transformed \n Total used memory: {used_gb:.2f} GiB\n")
 
@@ -153,10 +157,13 @@ mod_object.results = opt.solve(
 with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc("Model Solved", ostream=fil)
 with open(log_folder + "/memory.log", "a") as fil:
-    mem_info = psutil.virtual_memory()
-    used_bytes = mem_info.used
+    pid = os.getpid()
+    process = psutil.Process(pid)
+    mem_info = process.memory_info()
+    used_bytes = mem_info.rss
     used_gb = used_bytes / (1024**3)
     fil.write(f"Model solved \n Total used memory: {used_gb:.2f} GiB\n")
+
 import pyomo.environ as pyo
 import pyomo.gdp as gdp
 
@@ -217,8 +224,10 @@ with open(log_folder + "timer.log", "a") as fil:
         "we've dumped; get everybody and the stuff together", ostream=fil
     )
 
-# with open(log_folder + "/memory.log", "a") as fil:
-#     mem_info = psutil.virtual_memory()
-#     used_bytes = mem_info.used
-#     used_gb = used_bytes / (1024**3)
-#     fil.write(f"Model dumped \n Total used memory: {used_gb:.2f} GiB\n")
+with open(log_folder + "/memory.log", "a") as fil:
+    pid = os.getpid()
+    process = psutil.Process(pid)
+    mem_info = process.memory_info()
+    used_bytes = mem_info.rss
+    used_gb = used_bytes / (1024**3)
+    fil.write(f"Model dumped \n Total used memory: {used_gb:.2f} GiB\n")

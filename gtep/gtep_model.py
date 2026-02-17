@@ -1318,6 +1318,8 @@ def add_dispatch_constraints(b, disp_per):
             == c_p.renewableCapacityExpected[renewableGen]
         )
 
+    c_p.renewableCapacityexpected.display()
+
     ## TODO: (@jkskolf) add renewableExtended to this and anywhere else
     @b.Constraint(m.renewableGenerators)
     def operational_renewables_only(b, renewableGen):
@@ -2780,7 +2782,7 @@ def model_data_references(m):
         doc="Maximum output of each renewable generator",
     )
 
-    m.renewableCapacityNameplate.pprint()
+    m.renewableCapacityNameplate.display()
 
     # TODO: WHAT HAVE I DONE HERE I HATE IT and JSC made it worse...
 

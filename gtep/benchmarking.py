@@ -139,6 +139,12 @@ opt = SolverFactory("gurobi_direct_v2")
 mod_object.timer.toc(
     "let's start to solve -- this is really the start of the handoff to gurobi"
 )
+
+from pyomo.contrib.iis import iis
+
+iis(mod_object, "infeasible_model.ilp")
+
+
 mod_object.results = opt.solve(
     mod_object.model,
     tee=True,

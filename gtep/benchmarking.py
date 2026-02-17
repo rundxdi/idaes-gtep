@@ -38,16 +38,27 @@ if len(sys.argv) > 1:
     flow_model = sys.argv[9]
     unit_commitment = bool(sys.argv[10])
     dispatch = bool(sys.argv[11])
-    log_folder = sys.argv[12]
 else:
     pass
+
+log_folder = "logging_case_" + "_".join(str(i) for i in sys.argv if "pyth" not in i)
 
 if not os.path.exists(log_folder):
     os.makedirs(log_folder)
 
 with open(log_folder + "/input.log", "w") as fil:
-    input_str = "".join([str(i) for i in sys.argv])
-    fil.write(input_str)
+    fil.write(f"{num_investment_periods = }\n")
+    fil.write(f"{num_representative_periods = }\n")
+    fil.write(f"{length_representative_periods = }\n")
+    fil.write(f"{num_commitment_periods = }\n")
+    fil.write(f"{num_dispatch_periods = }\n")
+    fil.write(f"{thermal_investment = }\n")
+    fil.write(f"{renewable_investment = }\n")
+    fil.write(f"{storage_investment = }\n")
+    fil.write(f"{flow_model = }\n")
+    fil.write(f"{unit_commitment = }\n")
+    dispatch
+
 
 data_path = "./gtep/data/Texas_2000"
 # data_path = "./gtep/data/5bus"

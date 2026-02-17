@@ -1318,8 +1318,8 @@ def add_dispatch_constraints(b, disp_per):
             == c_p.renewableCapacityExpected[renewableGen]
         )
 
-    with open("capacity_expected.log","a") as fil:
-        b.capacity_factor.display(ostream=fil)
+    # with open("capacity_expected.log","a") as fil:
+    #     b.capacity_factor.display(ostream=fil)
 
     ## TODO: (@jkskolf) add renewableExtended to this and anywhere else
     @b.Constraint(m.renewableGenerators)
@@ -2773,7 +2773,12 @@ def model_data_references(m):
                 if type(m.md.data["elements"]["generator"][renewableGen]["p_max"])
                 == float
                 else max(
-                    m.md.data["elements"]["generator"][renewableGen]["p_max"]["values"]
+                    [
+                        m.data[i]["elements"]["generator"][renewableGen]["p_max"][
+                            "values"
+                        ]
+                        for i in range(len(m.data))
+                    ]
                 )
             )
             for renewableGen in m.renewableGenerators
@@ -2782,8 +2787,9 @@ def model_data_references(m):
         units=u.MW,
         doc="Maximum output of each renewable generator",
     )
-    with open("capacity_nameplate.log","w") as fil:
-        m.renewableCapacityNameplate.display(ostream=fil)
+
+    # with open("capacity_nameplate.log","w") as fil:
+    #     m.renewableCapacityNameplate.display(ostream=fil)
 
     # TODO: WHAT HAVE I DONE HERE I HATE IT and JSC made it worse...
 

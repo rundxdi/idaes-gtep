@@ -1318,8 +1318,8 @@ def add_dispatch_constraints(b, disp_per):
             == c_p.renewableCapacityExpected[renewableGen]
         )
 
-    with open("capacity_expected.log","w") as fil:
-        c_p.renewableCapacityExpected.display(ostream=fil)
+    with open("capacity_expected.log","a") as fil:
+        b.capacity_factor.display(ostream=fil)
 
     ## TODO: (@jkskolf) add renewableExtended to this and anywhere else
     @b.Constraint(m.renewableGenerators)

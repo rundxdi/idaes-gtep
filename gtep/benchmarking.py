@@ -140,9 +140,9 @@ mod_object.timer.toc(
     "let's start to solve -- this is really the start of the handoff to gurobi"
 )
 
-from pyomo.contrib.iis import iis
+# from pyomo.contrib.iis import iis
 
-iis.write_iis(mod_object.model, log_folder + "/infeasible_model.ilp")
+# iis.write_iis(mod_object.model, log_folder + "/infeasible_model.ilp")
 
 
 mod_object.results = opt.solve(

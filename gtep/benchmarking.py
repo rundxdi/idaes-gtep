@@ -142,7 +142,7 @@ mod_object.timer.toc(
 
 from pyomo.contrib.iis import iis
 
-iis(mod_object, "infeasible_model.ilp")
+iis.write_iis(mod_object, log_folder + "/infeasible_model.ilp")
 
 
 mod_object.results = opt.solve(

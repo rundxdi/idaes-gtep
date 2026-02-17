@@ -2780,6 +2780,8 @@ def model_data_references(m):
         doc="Maximum output of each renewable generator",
     )
 
+    m.renewableCapacityNameplate.pprint()
+
     # TODO: WHAT HAVE I DONE HERE I HATE IT and JSC made it worse...
 
     # [ESR WIP: Take only the value for renewable capacity when using

@@ -2774,7 +2774,7 @@ def model_data_references(m):
                 == float
                 else max(
                     [
-                        m.data_list[i]["elements"]["generator"][renewableGen]["p_max"][
+                        m.data_list[i].data["elements"]["generator"][renewableGen]["p_max"][
                             "values"
                         ]
                         for i in range(len(m.data_list))

@@ -41,9 +41,7 @@ if len(sys.argv) > 1:
 else:
     pass
 
-log_folder = "logging_case_" + "_".join(
-    str(i) for i in sys.argv if "pyth" not in i and "gtep" not in i
-)
+log_folder = "logging_case_" + "_".join([sys.argv[i] for i in range(1, 12)])
 
 if not os.path.exists(log_folder):
     os.makedirs(log_folder)

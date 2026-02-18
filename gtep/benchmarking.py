@@ -236,7 +236,7 @@ with open(load_shed_name, "w") as fil:
 with open(costs_name, "w") as fil:
     json.dump(costs, fil)
 
-with open(log_folder + "timer.log", "a") as fil:
+with open(log_folder + "/timer.log", "a") as fil:
     mod_object.timer.toc(
         "we've dumped; get everybody and the stuff together", ostream=fil
     )

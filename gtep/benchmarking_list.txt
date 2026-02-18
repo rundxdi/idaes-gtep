@@ -20,3 +20,20 @@ experiments
 (cee-34/ 7:14 2/8) python gtep/benchmarking.py 2 4 72 72 1 True True True DC True True testing_2_4_72_72_1_T_T_T_DC_T_T
 (cee-35/ 16:20 2/9) python gtep/benchmarking.py 2 4 24 12 2 True True True DC True True testing_2_4_24_12_2_T_T_T_DC_T_T
 (cee-36/ 6:20 2/9) python gtep/benchmarking.py 2 4 36 12 3 True True True DC True True testing_2_4_36_12_3_T_T_T_DC_T_T
+
+python gtep/benchmarking.py 2 4 12 12 1 True True True DC True True test2_2_4_12_12_1_T_T_T_DC_T_T
+python gtep/benchmarking.py 2 4 24 24 1 True True True DC True True test2_2_4_24_24_1_T_T_T_DC_T_T
+python gtep/benchmarking.py 2 4 36 36 1 True True True DC True True test2_2_4_36_36_1_T_T_T_DC_T_T
+
+
+
+update post fix:
+python gtep/benchmarking.py 2 2 2 2 1 True True True DC True True test2_2_2_2_2_1_T_T_T_DC_T_T
+python gtep/benchmarking.py 2 2 12 12 1 True True True DC True True test2_2_2_12_12_1_T_T_T_DC_T_T
+python gtep/benchmarking.py 2 2 24 24 1 True True True DC True True test2_2_2_24_24_1_T_T_T_DC_T_T
+python gtep/benchmarking.py 2 2 4 2 1 True True True DC True True test2_2_2_4_2_1_T_T_T_DC_T_T
+python gtep/benchmarking.py 2 4 2 2 1 True True True DC True True 
+python gtep/benchmarking.py 2 4 4 2 1 True True True DC True True 
+
+
+python gtep/benchmarking.py 2 4 4 4 1 True True True DC True True 

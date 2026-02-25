@@ -3346,29 +3346,28 @@ def model_create_investment_stages(m, stages):
 
     # Renewable generation (in MW) retirement relationships
     if len(m.stages) > 1:
-        if len(m.stages) > 1:
-            ##FIXME Rewrite as logic
-            @m.Constraint(m.stages, m.thermalGenerators)
-            def gen_retirement(m, stage, gen):
-                return sum(
-                    m.investmentStage[t_2]
-                    .genOperational[gen]
-                    .indicator_var.get_associated_binary()
-                    + m.investmentStage[t_2]
-                    .genInstalled[gen]
-                    .indicator_var.get_associated_binary()
-                    for t_2 in m.stages
-                    if t_2 <= stage - pyo.value(m.lifetimes[gen])
-                ) <= sum(
-                    m.investmentStage[t_1]
-                    .genRetired[gen]
-                    .indicator_var.get_associated_binary()
-                    + m.investmentStage[t_1]
-                    .genExtended[gen]
-                    .indicator_var.get_associated_binary()
-                    for t_1 in m.stages
-                    if t_1 <= stage
-                )
+        ##FIXME Rewrite as logic
+        @m.Constraint(m.stages, m.thermalGenerators)
+        def gen_retirement(m, stage, gen):
+            return sum(
+                m.investmentStage[t_2]
+                .genOperational[gen]
+                .indicator_var.get_associated_binary()
+                + m.investmentStage[t_2]
+                .genInstalled[gen]
+                .indicator_var.get_associated_binary()
+                for t_2 in m.stages
+                if t_2 <= stage - pyo.value(m.lifetimes[gen])
+            ) <= sum(
+                m.investmentStage[t_1]
+                .genRetired[gen]
+                .indicator_var.get_associated_binary()
+                + m.investmentStage[t_1]
+                .genExtended[gen]
+                .indicator_var.get_associated_binary()
+                for t_1 in m.stages
+                if t_1 <= stage
+            )
 
         # Renewable generation (in MW) retirement relationships
         # if len(m.stages) > 1:

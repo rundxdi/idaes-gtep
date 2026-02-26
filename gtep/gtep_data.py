@@ -213,9 +213,9 @@ class ExpansionPlanningData:
         for gen in self.md.data["elements"]["generator"]:
             if self.md.data["elements"]["generator"][gen]["fuel"] == "C":
                 if self.md.data["elements"]["generator"][gen]["in_service"] == False:
-                    self.md.data["elements"]["generator"][gen]["lifetime"] = 1
+                    self.md.data["elements"]["generator"][gen]["lifetime"] = 4
                 else:
-                    self.md.data["elements"]["generator"][gen]["lifetime"] = 2
+                    self.md.data["elements"]["generator"][gen]["lifetime"] = 4
             else:
                 self.md.data["elements"]["generator"][gen]["lifetime"] = 3
                 self.md.data["elements"]["generator"][gen]["lifetime"] = 3
@@ -234,7 +234,7 @@ class ExpansionPlanningData:
         for branch in self.md.data["elements"]["branch"]:
             self.md.data["elements"]["branch"][branch]["loss_rate"] = 0
             self.md.data["elements"]["branch"][branch]["distance"] = 1
-            self.md.data["elements"]["branch"][branch]["capital_cost"] = 10000000
+            self.md.data["elements"]["branch"][branch]["capital_cost"] = 1000000
         self.md.data["system"]["min_operating_reserve"] = 0.1
         self.md.data["system"]["min_spinning_reserve"] = 0.1
 

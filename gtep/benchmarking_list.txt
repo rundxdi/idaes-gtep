@@ -39,3 +39,7 @@ python gtep/benchmarking.py 2 2 2 2 2 True True True DC True True
 python gtep/benchmarking.py 2 2 2 2 4 True True True DC True True 
 python gtep/benchmarking.py 2 2 6 6 1 True True True DC True True 
 python gtep/benchmarking.py 2 2 8 8 1 True True True DC True True 
+
+python gtep/benchmarking.py 3 3 12 12 1 True True True DC True True
+python gtep/benchmarking.py 3 3 24 24 1 True True True DC True True
+python gtep/benchmarking.py 3 3 36 36 1 True True True DC True True

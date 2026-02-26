@@ -26,18 +26,20 @@ from gtep.gtep_data_processing import DataProcessing
 
 gc.disable()
 
+truth_map = {"True": True, "False": False}
+
 if len(sys.argv) > 1:
     num_investment_periods = int(sys.argv[1])
     num_representative_periods = int(sys.argv[2])
     length_representative_periods = int(sys.argv[3])
     num_commitment_periods = int(sys.argv[4])
     num_dispatch_periods = int(sys.argv[5])
-    thermal_investment = bool(sys.argv[6])
-    renewable_investment = bool(sys.argv[7])
-    storage_investment = bool(sys.argv[8])
+    thermal_investment = truth_map[sys.argv[6]]
+    renewable_investment = truth_map[sys.argv[7]]
+    storage_investment = truth_map[sys.argv[8]]
     flow_model = sys.argv[9]
-    unit_commitment = bool(sys.argv[10])
-    dispatch = bool(sys.argv[11])
+    unit_commitment = truth_map[sys.argv[10]]
+    dispatch = truth_map[sys.argv[11]]
 else:
     pass
 
@@ -151,9 +153,9 @@ mod_object.timer.toc(
     "let's start to solve -- this is really the start of the handoff to gurobi"
 )
 
-from pyomo.contrib.iis import iis
+# from pyomo.contrib.iis import iis
 
-iis.write_iis(mod_object.model, log_folder + "/infeasible_model.ilp")
+# iis.write_iis(mod_object.model, log_folder + "/infeasible_model.ilp")
 
 
 mod_object.results = opt.solve(
@@ -162,7 +164,7 @@ mod_object.results = opt.solve(
     solver_options={
         "LogFile": log_folder + "/gurobi.log",
         "MIPGap": 0.01,
-        "Threads": 8,
+        "Threads": 16,
     },
 )
 

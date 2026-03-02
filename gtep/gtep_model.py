@@ -1301,7 +1301,7 @@ def add_dispatch_constraints(b, disp_per):
             balance += sum(b.storageDischarged[bt] for bt in batts)
             balance -= sum(b.storageCharged[bt] for bt in batts)
 
-            balance -= m.loads[bus]  # add new parameter (already includes units)
+            balance -= c_p.loads.get(bus) or 0  # add new parameter (already includes units)
             balance += b.loadShed[bus]
             return balance == 0 * u.MW
 

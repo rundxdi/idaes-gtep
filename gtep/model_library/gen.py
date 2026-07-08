@@ -546,6 +546,16 @@ def generators_status_always_on(m, b, r_p, i_p, commitment_period):
                 <= m.thermalCapacity[generator]
             )
 
+        @disj.Constraint(
+            b.dispatchPeriods,
+            doc="Enforces that generators cannot be committed unless they are operational or just installed",
+        )
+        def commit_active_gens_only(d, dispatchPeriod):
+            return (
+                b.dispatchPeriod[dispatchPeriod].thermalGeneration[generator]
+                <= i_p.genOperational[generator].binary_indicator_var * u.MW
+                + i_p.genInstalled[generator].binary_indicator_var * u.MW
+                + i_p.genExtended[generator].binary_indicator_var * u.MW
     @b.Disjunct(m.thermalGenerators)
     def genOff(disj, generator):
         b = disj.parent_block()
@@ -779,7 +789,7 @@ def add_dispatch_generators_variables(m, b):
         def thermal_reactive_generation_limits(
             b, thermalGen, doc="Bounds on thermal generator reactive generation"
         ):
-            return (0, m.thermalReactiveCapacity[thermalGen])
+            return (m.thermalReactiveMin[thermalGen], m.thermalReactiveMax[thermalGen])
 
         b.thermalReactiveGeneration = pyo.Var(
             m.thermalGenerators,
@@ -838,3 +848,24 @@ def add_dispatch_generators_variables(m, b):
         units=u.MW,
         doc="Curtailment of renewable generators",
     )
+
+    if m.config["advanced_hydro"]:
+        # TODO make consistent with how this is handled for other
+        # renewable gens
+        def hydro_generation_limits(b, hydroGen):
+            return (
+                c_p.hydroMinimumExpected[hydroGen],
+                c_p.hydroCapacityExpected[hydroGen],
+            )
+
+        def hydro_generation_init(b, hydroGen):
+            return c_p.hydroMinimumExpected[hydroGen]
+
+        b.hydroGeneration = pyo.Var(
+            m.hydroGenerators,
+            domain=pyo.NonNegativeReals,
+            bounds=hydro_generation_limits,
+            initialize=hydro_generation_init,
+            units=u.MW,
+            doc="Hydropower generation",
+        )

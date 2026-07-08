@@ -16,69 +16,57 @@
 import pyomo.environ as pyo
 from pyomo.environ import units as u
 
-# def add_daily_hydropower_limits(b, commitmentPeriod):
-#     m = b.model()
-
-#     # TODO move capacity and minimum constraints to here and let hydro gen variables have overall bounds
-#     @b.Constraint(
-#         m.hydroGenerators,
-#         doc="Enforce commitment period maximum hydropower generation in addition nameplate hydropower capacity",
-#     )
-#     def strict_hydro_maximum(b, commitmentPeriod, gen):
-#         return b.hydroGeneration <= 0
-
-#     @b.Constraint(
-#         m.hydroGenerators,
-#         doc="Enforce commitment period minimum hydropower generation",
-#     )
-#     def strict_hydro_minimum(b, commitmentPeriod, gen):
-#         return b.hydroGeneration >= 0
-
 
 def fix_hydropower_limits(b, commitmentPeriod):
 
     m = b.model()
 
-    b.hydroCapacityExpected = {}
-    b.hydroMinimumExpected = {}
-    b.hydroAverageExpected = {}
-
     units_renewable_capacity = u.MW
 
-    for hydroGen in m.hydroGenerators:
-        b.hydroCapacityExpected[hydroGen] = (
-            m.md.data["elements"]["generator"][hydroGen]["p_max"]["values"][
-                commitmentPeriod - 1
-            ]
-            * units_renewable_capacity
-        )
-        b.hydroMinimumExpected[hydroGen] = (
-            m.md.data["elements"]["generator"][hydroGen]["p_min"]["values"][
-                commitmentPeriod - 1
-            ]
-            * units_renewable_capacity
-        )
-        b.hydroAverageExpected[hydroGen] = (
-            m.md.data["elements"]["generator"][hydroGen]["p_average"]["values"][
-                commitmentPeriod - 1
-            ]
-            * units_renewable_capacity
-        )
+    b.hydroCapacityExpected = pyo.Param(
+        m.hydroGenerators,
+        initialize={
+            hydroGen: (
+                m.md.data["elements"]["generator"][hydroGen]["p_max"]["values"][
+                    commitmentPeriod - 1
+                ]
+            )
+            for hydroGen in m.hydroGenerators
+        },
+        # mutable=True,
+        units=units_renewable_capacity,
+        doc="Expected maximum hydro capacity for each hydro generator",
+    )
+
+    b.hydroMinimumExpected = pyo.Param(
+        m.hydroGenerators,
+        initialize={
+            hydroGen: (
+                m.md.data["elements"]["generator"][hydroGen]["p_min"]["values"][
+                    commitmentPeriod - 1
+                ]
+            )
+            for hydroGen in m.hydroGenerators
+        },
+        # mutable=True,
+        units=units_renewable_capacity,
+        doc="Expected minimum hydro generation for each hydro generator",
+    )
 
 
-def add_representative_hydropower_average(b, repPer):
+def add_representative_hydropower(b, repPer):
     m = b.model()
 
     @b.Constraint(
         m.hydroGenerators,
         doc="Enforce total hydropower generation requirements for given representative period",
     )
-    def average_hydro_generation(b, hydroGen):
+    def required_hydro_generation(b, hydroGen):
         return sum(
             b.commitmentPeriod[c_p].dispatchPeriod[d_p].hydroGeneration[hydroGen]
             for c_p in b.commitmentPeriods
             for d_p in b.commitmentPeriod[c_p].dispatchPeriods
-        ) <= sum(
-            b.commitmentPeriod[c_p].hydroAverageExpected[hydroGen]
+        ) >= sum(
+            b.commitmentPeriod[c_p].hydroMinimumExpected[hydroGen]
             for c_p in b.commitmentPeriods
         )

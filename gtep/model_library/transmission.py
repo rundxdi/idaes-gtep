@@ -43,18 +43,20 @@ def add_investment_transmission_constraints(m, b, investment_stage):
 
     @b.Expression(doc="Transmission investment costs in $")
     def transmission_investment_cost(b):
+        m = b.model()
+
         return sum(
             m.transmissionCapacity[branch]
             * m.branchInvestmentCost[branch]
             * m.branchCapitalMultiplier[branch]
             * b.branchInstalled[branch].indicator_var.get_associated_binary()
-            for branch in m.transmission
+            for branch in m.lines
         ) + sum(
             m.transmissionCapacity[branch]
             * m.branchInvestmentCost[branch]
             * m.branchExtensionMultiplier[branch]
             * b.branchExtended[branch].indicator_var.get_associated_binary()
-            for branch in m.transmission
+            for branch in m.lines
         )
 
 
@@ -117,7 +119,7 @@ def add_transmission_logical_constraints(m):
 
     @m.LogicalConstraint(
         m.stages,
-        m.transmission,
+        m.lines,
         doc="Enforces that, if a branch is online at time t, it must have been online or installed at time t-1",
     )
     def consistent_branch_operation(m, stage, branch):
@@ -134,7 +136,7 @@ def add_transmission_logical_constraints(m):
 
     @m.LogicalConstraint(
         m.stages,
-        m.transmission,
+        m.lines,
         doc="Enforces that, if a branch is online at time t, it must be online, extended, or retired at time t+1",
     )
     def consistent_branch_operation_future(m, stage, branch):
@@ -152,7 +154,7 @@ def add_transmission_logical_constraints(m):
 
     @m.LogicalConstraint(
         m.stages,
-        m.transmission,
+        m.lines,
         doc="Enforces that, if a branch is retired in period t-1, it should be disabled in period t",
     )
     def full_branch_retirement(m, stage, branch):
@@ -168,7 +170,7 @@ def add_transmission_logical_constraints(m):
 
     @m.LogicalConstraint(
         m.stages,
-        m.transmission,
+        m.lines,
         doc="Enforces that, if a branch is disabled at time t-1, it must stay disabled or be installed at time t",
     )
     def consistent_branch_disabled(m, stage, branch):
@@ -185,7 +187,7 @@ def add_transmission_logical_constraints(m):
 
     @m.LogicalConstraint(
         m.stages,
-        m.transmission,
+        m.lines,
         doc="Enforces that, if a branch is extended at time t-1, it must stay extended or be retired at time t",
     )
     def consistent_branch_extended(m, stage, branch):
@@ -202,7 +204,7 @@ def add_transmission_logical_constraints(m):
 
     @m.LogicalConstraint(
         m.stages,
-        m.transmission,
+        m.lines,
         doc="Enforces that, if a branch is installed in period t-1, it must be operational in period t",
     )
     def full_branch_investment(m, stage, branch):
@@ -227,7 +229,7 @@ def add_transmission_state_disjuncts(m, b, i_p):
 
     """
 
-    @b.Disjunct(m.transmission)
+    @b.Disjunct(m.lines)
     def branchInUse(disj, branch):
         b = disj.parent_block()
 
@@ -238,12 +240,7 @@ def add_transmission_state_disjuncts(m, b, i_p):
         # Create bus angle variables for the buses associated with
         # the branch that is in use
         disj.branch_buses = [
-            bb
-            for bb in m.buses
-            if (
-                m.transmission[branch]["from_bus"] == bb
-                or m.transmission[branch]["to_bus"] == bb
-            )
+            bb for bb in m.buses if (m.from_bus[branch] == bb or m.to_bus[branch] == bb)
         ]
 
         disj.busAngle = pyo.Var(
@@ -257,8 +254,8 @@ def add_transmission_state_disjuncts(m, b, i_p):
             return (-math.pi / 6, math.pi / 6)
 
         def delta_bus_angle_rule(disj, doc="Maximum bus angle discrepancy"):
-            fb = m.transmission[branch]["from_bus"]
-            tb = m.transmission[branch]["to_bus"]
+            fb = m.from_bus[branch]
+            tb = m.to_bus[branch]
             return disj.busAngle[tb] - disj.busAngle[fb]
 
         disj.deltaBusAngle = pyo.Var(
@@ -268,8 +265,8 @@ def add_transmission_state_disjuncts(m, b, i_p):
         )
 
         if m.config["flow_model"] == "ACP":
-            fb = m.transmission[branch]["from_bus"]
-            tb = m.transmission[branch]["to_bus"]
+            fb = m.from_bus[branch]
+            tb = m.to_bus[branch]
             resistance = m.md.data["elements"]["branch"][branch].get("resistance", 0.0)
             reactance = m.md.data["elements"]["branch"][branch].get("reactance", 1e-6)
 
@@ -325,8 +322,8 @@ def add_transmission_state_disjuncts(m, b, i_p):
                 )
 
         if m.config["flow_model"] == "ACR":
-            fb = m.transmission[branch]["from_bus"]
-            tb = m.transmission[branch]["to_bus"]
+            fb = m.from_bus[branch]
+            tb = m.to_bus[branch]
             resistance = m.md.data["elements"]["branch"][branch].get("resistance", 0.0)
             reactance = m.md.data["elements"]["branch"][branch].get("reactance", 1e-6)
 
@@ -389,8 +386,8 @@ def add_transmission_state_disjuncts(m, b, i_p):
 
             @disj.Constraint()
             def dc_power_flow(disj):
-                fb = m.transmission[branch]["from_bus"]
-                tb = m.transmission[branch]["to_bus"]
+                fb = m.from_bus[branch]
+                tb = m.to_bus[branch]
                 reactance = m.md.data["elements"]["branch"][branch]["reactance"]
                 if (
                     m.md.data["elements"]["branch"][branch]["branch_type"]
@@ -410,7 +407,7 @@ def add_transmission_state_disjuncts(m, b, i_p):
                     disj.busAngle[tb] - disj.busAngle[fb] + shift
                 )
 
-    @b.Disjunct(m.transmission)
+    @b.Disjunct(m.lines)
     def branchNotInUse(disj, branch):
 
         # Fixing power flow to 0 and not creating bus angle variables
@@ -423,7 +420,7 @@ def add_transmission_state_disjuncts(m, b, i_p):
 
     # Branches are either in-use or not. This disjunction may provide the
     # basis for transmission switching in the future.
-    @b.Disjunction(m.transmission)
+    @b.Disjunction(m.lines)
     def branchInUseStatus(disj, branch):
         return [disj.branchInUse[branch], disj.branchNotInUse[branch]]
 
@@ -433,7 +430,7 @@ def add_transmission_state_disjuncts(m, b, i_p):
 
         # [TODO: Update this when switching is implemented.]
         @b.LogicalConstraint(
-            m.transmission,
+            m.lines,
             doc="Enforces that, if a branch is in use, it must be active",
         )
         def must_use_active_branches(b, branch):
@@ -447,7 +444,7 @@ def add_transmission_state_disjuncts(m, b, i_p):
 
         # JSC update - If a branch is not in use, it must be inactive.
         # Update this when switching is implemented
-        @b.LogicalConstraint(m.transmission)
+        @b.LogicalConstraint(m.lines)
         def cannot_use_inactive_branches(b, branch):
             return b.branchNotInUse[branch].indicator_var.implies(
                 pyo.lor(

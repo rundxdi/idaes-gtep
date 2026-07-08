@@ -16,13 +16,17 @@
 # author: Kyle Skolfield
 # date: 01/04/2024
 # Model available at http://www.optimization-online.org/DB_FILE/2017/08/6162.pdf
+import logging
+from pathlib import Path
 import csv
-from pyomo.environ import *
-from prescient.simulator.config import PrescientConfig
-from prescient.data.providers import gmlc_data_provider
 import pandas as pd
 import os
-from pathlib import Path
+import random
+
+from prescient.simulator.config import PrescientConfig
+from prescient.data.providers import gmlc_data_provider
+
+logger = logging.getLogger("gtep.gtep_data")
 
 
 class ExpansionPlanningData:
@@ -153,17 +157,79 @@ class ExpansionPlanningData:
             if "-c" in stor:  # key/Branch UID
                 self.md.data["elements"]["storage"][stor]["in_service"] = False
 
-        ## NOTE: Below is only for multiple representative periods and creates a list
-        ## of modelData objects, not just a single modelData object
-        # Arbitrary time points and lengths picked for representative periods
-        # default here allows up to 24 hours for periods
+        # Get the timestamps in the loaded day-ahead data. Default
+        # representative_dates are selected from this list to ensure
+        # they correspond to valid input data timestamps. if
+        # representative_dates are provided by the user, those values
+        # are used instead.
+        time_keys = self.md.data["system"]["time_keys"]
+
         if representative_dates is None:
-            representative_dates = [
-                "2034-01-28 00:00",
-                "2034-04-23 00:00",
-                "2034-07-05 00:00",
-                "2034-10-14 00:00",  ## Change the last date for whatever extreme day is needed based on the given run(s)
+            available_day_starts = time_keys[::period_per_step]
+
+            if len(available_day_starts) < self.num_reps:
+                raise ValueError(
+                    "Not enough available day-start timestamps to select default representative dates. Please provide a custom list of representative_dates in the driver or reduce num_reps."
+                )
+
+            # Pick 4 default representative dates from the loaded
+            # data: winter, spring, summer, and fall. If self.num_reps
+            # < 4, use only the first self.num_reps default dates. If
+            # more than 4 representative periods are requested, keep
+            # these 4 defaults and randomly select the remaining dates
+            # from the available day-start timestamps.
+            default_representative_dates = [
+                available_day_starts[27],  # 2020-01-28
+                available_day_starts[113],  # 2020-04-23
+                available_day_starts[186],  # 2020-07-05
+                available_day_starts[287],  # 2020-10-14
             ]
+
+            if self.num_reps <= 4:
+                representative_dates = default_representative_dates[: self.num_reps]
+            else:
+                if len(available_day_starts) < self.num_reps:
+                    raise ValueError(
+                        "Not enough available day-start timestamps to select default representative dates. "
+                        "Please provide a custom list of representative_dates in the driver or reduce num_reps."
+                    )
+
+                random_seed = 42
+                rng = random.Random(random_seed)
+                remaining_dates = [
+                    date
+                    for date in available_day_starts
+                    if date not in default_representative_dates
+                ]
+                additional_dates = rng.sample(
+                    remaining_dates,
+                    self.num_reps - len(default_representative_dates),
+                )
+                representative_dates = sorted(
+                    default_representative_dates + additional_dates,
+                    key=lambda date: time_keys.index(date),
+                )
+        else:
+            # Validate that the user-provided representative_dates
+            # match the requested number of representative periods.
+            if len(representative_dates) != self.num_reps:
+                raise ValueError(
+                    f"The number of provided representative_dates must match num_reps. "
+                    f"Received len(representative_dates)={len(representative_dates)}, "
+                    f"but num_reps={self.num_reps}."
+                )
+
+            # Validate that all user-provided representative dates
+            # exist in the loaded day-ahead timestamps.
+            missing_dates = [
+                date for date in representative_dates if date not in time_keys
+            ]
+            if missing_dates:
+                raise ValueError(
+                    "The following representative_dates are not valid timestamps in the "
+                    f"loaded day-ahead input data: {missing_dates}"
+                )
+
         self.representative_dates = representative_dates
 
         if representative_weights:
@@ -177,76 +243,50 @@ class ExpansionPlanningData:
                     "INFO: representative_dates and representative_weights are aligned. Continue building the data modeling object..."
                 )
 
-            # Store as a list attribute
-            self.representative_weights = list(representative_weights)
-
-            # Additionally, create a mapping for later use:
+            # Store as a dictionary
             self.representative_weights_dict = dict(
                 zip(representative_dates, representative_weights)
             )
 
         else:
-            # Set the weight for each day to the total weight divided
-            # by number of days
-            total_weight = prescient_options.num_days * self.stages
-            weight_per_date = int(total_weight / (len(representative_dates)))
-            self.representative_weights = {
-                key: weight_per_date
-                for date, key in enumerate(self.representative_dates)
+
+            # Set weight for each representative day to default value
+            # of 1. The other option is to set the weight for each day
+            # to the total weight divided by the number of
+            # representative dates.
+            set_default_weight = True
+            if set_default_weight:
+                weight_per_date = 1
+            else:
+                total_weight = prescient_options.num_days * self.stages
+                weight_per_date = int(total_weight / len(representative_dates))
+
+            # Store weights as a dictionary by representative date
+            self.representative_weights_dict = {
+                date: weight_per_date for date in self.representative_dates
             }
 
-        # Add new hydro time series data for p_average to self.md. Add
-        # this before creating representative_data to make sure all
-        # representative period ModelData clones will include the new
-        # hydro data. NOTE: Prescient does not handle hydro average
-        # time series, so we manually add it here from the processed
-        # CSV.
-        hydro_avg_file = os.path.join(data_path, "DAY_AHEAD_hydro_average.csv")
-        with open(hydro_avg_file, newline="") as csvfile:
-            reader = csv.DictReader(csvfile)
-            hydro_gens = [
-                col
-                for col in reader.fieldnames
-                if col not in ("Year", "Month", "Day", "Period")
-            ]
-            hydro_data = {gen: [] for gen in hydro_gens}
-            for row in reader:
-                for gen in hydro_gens:
-                    try:
-                        val = float(row[gen])
-                    except (ValueError, TypeError, KeyError):
-                        val = 0.0
-                    hydro_data[gen].append(val)
-
-        # Assign to m.md
-        for hydroGen in hydro_gens:
-            self.md.data["elements"]["generator"][hydroGen]["p_average"] = {
-                "data_type": "time_series",
-                "values": hydro_data[hydroGen],
-            }
-
-        # Read heat rates from gen.csv
+        # Read average heat rates from the "HR_avg_0" column in
+        # gen.csv and assign them to each generator in self.md. This
+        # is done manually because the generator data loaded into
+        # self.md does not include heat rate values by default. Units
+        # should be in MMBTU/MWh.
         gen_csv_file = os.path.join(data_path, "gen.csv")
         heat_rate_dict = {}
         with open(gen_csv_file, newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
                 gen_uid = row.get("GEN UID")
-                # Try to get heat rate from a column like "HR_avg_0" or similar
-                # Adjust the column name if your file uses a different one
                 heat_rate_str = row.get("HR_avg_0")
-                try:
-                    heat_rate = (
-                        float(heat_rate_str)
-                        if heat_rate_str not in (None, "", "NA")
-                        else None
-                    )
-                except ValueError:
+
+                if heat_rate_str not in (None, "", "NA"):
+                    heat_rate = float(heat_rate_str)
+                else:
                     heat_rate = None
+
                 if gen_uid and heat_rate is not None:
                     heat_rate_dict[gen_uid] = heat_rate
 
-        # Assign heat_rate to each generator in self.md
         for gen in self.md.data["elements"]["generator"]:
             if gen in heat_rate_dict:
                 self.md.data["elements"]["generator"][gen]["heat_rate"] = (
@@ -254,6 +294,20 @@ class ExpansionPlanningData:
                 )
             else:
                 self.md.data["elements"]["generator"][gen]["heat_rate"] = 0
+
+        thermal_heat_rates = [
+            self.md.data["elements"]["generator"][gen].get("heat_rate", 0)
+            for gen in self.md.data["elements"]["generator"]
+            if self.md.data["elements"]["generator"][gen].get("generator_type")
+            == "thermal"
+        ]
+
+        if thermal_heat_rates and all(hr == 0 for hr in thermal_heat_rates):
+            logger.info(
+                "All thermal generators have heat_rate values equal to 0. "
+                "Please re-check the input data. Fuel costs are multiplied by "
+                "heat_rate, so resulting fuel costs will all be 0."
+            )
 
         # IMPORTANT TO READ: Always add or modify any new elements in
         # self.md.data (such as new time series or parameters) BEFORE
@@ -425,6 +479,9 @@ class ExpansionPlanningData:
                     self.md.data["elements"]["generator"][gen]["emissions_factor"] = 1
                     self.md.data["elements"]["generator"][gen]["start_fuel"] = 1
                     self.md.data["elements"]["generator"][gen]["investment_cost"] = 1
+                    self.md.data["elements"]["generator"][gen].setdefault(
+                        "non_fuel_startup_cost", 0
+                    )
             if "branch" in self.md.data["elements"].keys():
                 for branch in self.md.data["elements"]["branch"]:
                     self.md.data["elements"]["branch"][branch]["loss_rate"] = 0

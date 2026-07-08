@@ -45,16 +45,6 @@ def add_investment_params_and_variables(b, investment_stage):
     b.quotaDeficit = pyo.Var(within=pyo.NonNegativeReals, initialize=0, units=u.MW)
     b.expansionCost = pyo.Var(within=pyo.NonNegativeReals, initialize=0, units=u.USD)
 
-    # # [TODO: Add this only when storage is included. Commented
-    # # condition for now since it causes an error during testing.]
-    # # if m.config["storage"]:
-    # #     stor.add_investment_storage_variables(b)
-
-    # [ESR: Comment variable since it is not calculated in the model.]
-    # b.storageCostInvestment = pyo.Var(
-    #     within=pyo.NonNegativeReals, initialize=0, units=u.USD
-    # )
-
     # if m.config["include_commitment"]:
     commit.add_investment_commitment_variables(b)
 
@@ -77,7 +67,7 @@ def add_investment_disjuncts(b):
         stor.add_storage_status_disjuncts(b, m.storage)
 
     if m.config["transmission"]:
-        transm.add_transmission_status_disjuncts(b, m.transmission)
+        transm.add_transmission_status_disjuncts(b, m.lines)
 
 
 def add_investment_constraints(
@@ -112,12 +102,14 @@ def add_investment_constraints(
     # consistently.]
     @b.Expression(doc="Investment costs for the investment period in $")
     def investment_cost(b):
-        if m.config["storage"] == True:
+        m = b.model()
+
+        if m.config["storage"]:
             storage_term = b.storage_investment_cost
         else:
             storage_term = 0 * u.USD
 
-        if m.config["transmission"] == True:
+        if m.config["transmission"]:
             transmission_term = b.transmission_investment_cost
         else:
             transmission_term = 0 * u.USD

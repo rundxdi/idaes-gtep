@@ -52,9 +52,11 @@ def add_commitment_parameters(b, commitment_period, investmentStage):
     if m.config["advanced_hydro"]:
         hydro.fix_hydropower_limits(b, commitment_period)
 
+    if m.config["advanced_hydro"]:
+        hydro.fix_hydropower_limits(b, commitment_period)
+
     # [TODO: Redesign load scaling and allow nature of
     # it as argument.]
-    # if m.config["scale_loads"]:
     scaling.add_load_scaling(
         m,
         b,
@@ -84,7 +86,7 @@ def add_commitment_disjuncts(b, commitment_period):
         gens.generators_status_always_on(m, b, r_p, i_p, commitment_period)
 
     if m.config["storage"]:
-        stor.add_storage_state_disjuncts(m, b, commitment_period)
+        stor.add_storage_state_disjuncts(b)
 
 
 def add_commitment_constraints(b, comm_per):
@@ -109,6 +111,8 @@ def add_commitment_constraints(b, comm_per):
     # re-assessed and account for missing data.]
     @b.Expression(doc="Total operating costs for commitment block in $")
     def operatingCostCommitment(b):
+        m = b.model()
+
         # [ESR Note: This term includes the op cost for each
         # 15-min dispatch period.]
         op_cost_dispatch = sum(
@@ -118,10 +122,9 @@ def add_commitment_constraints(b, comm_per):
 
         if m.config["storage"]:
             op_cost_storage = sum(
-                m.storageFixedCost[stor] * m.storageCapacity[stor]  # in $/MWh  # in MWh
+                m.storageFixedCost[stor] * m.storageCapacity[stor]  # in $/MWh * MWh
                 for stor in m.storage
             )
-            # op_cost_storage = 0
         else:
             op_cost_storage = 0
 
@@ -144,6 +147,18 @@ def add_commitment_constraints(b, comm_per):
                 * b.genStartup[gen].indicator_var.get_associated_binary()
                 for gen in m.thermalGenerators
             )
+            op_cost_gen_state += sum(
+                m.fixedCost[gen]
+                * b.commitmentPeriodLength
+                * m.renewableCapacityNameplate[gen]
+                for gen in m.renewableGenerators
+            )
+
+            if m.config["advanced_hydro"]:
+                op_cost_gen_state += sum(
+                    m.fixedCost[gen] * b.commitmentPeriodLength * m.hydroCapacity[gen]
+                    for gen in m.hydroGenerators
+                )
 
             op_cost_gen_state += sum(
                 m.generatorFixedCost[gen]

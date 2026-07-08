@@ -24,10 +24,8 @@ References:
 
 __author__ = "Kyle Skolfield"
 
+import logging
 import json
-import numpy as np
-import re
-import os
 
 import pyomo.environ as pyo
 from pyomo.environ import units as u
@@ -53,17 +51,14 @@ import gtep.model_library.gen as gens
 import gtep.model_library.storage as stor
 import gtep.model_library.transmission as transm
 
-from gtep.utils import (
-    _set_period_structure_dict,
-    check_period_structure_consistency,
-)
-
-curr_dir = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger("gtep.gtep_model")
 
 # Define what a USD is for pyomo units purposes. This will be set to a
 # base year and we will do NPV calculations based on automatic Pyomo
 # unit transformations.
-u.load_definitions_from_strings(["USD = [currency]", "MVAR = [power]"])
+u.load_definitions_from_strings(
+    ["USD = [currency]", "MVAR = [power]", "MMBTU = 1e6 * BTU"]
+)
 
 
 ## TODO: Egret features
@@ -301,14 +296,17 @@ def create_stages(
         b_inv.year = m.years[investment_stage - 1]
         # print(f"{b_inv}.year = {b_inv.year}")
 
-        # Declare costs parameters for each stage, since they depend
-        # on the investment year. [ESR: Commented for now since this
-        # data is not relevant for this case and calling a new one
-        # that applies the correct unit conversion.]
-        # comps.add_model_cost_parameters(m, b_inv.year)
-        comps.add_model_cost_parameters_from_csv(m, b_inv.year)
-        if m.config["storage"]:
-            stor.add_storage_cost_parameters_from_csv(m, b_inv.year)
+        # Declare cost parameters for each stage because they depend
+        # on the investment year. IMPORTANT NOTE: This function
+        # repopulates m.fuelCost, m.generatorInvestmentCost,
+        # m.fixedCost, and m.varCost, which were previously
+        # initialized in component.py. To preserve component.py
+        # values, comment out this call or the specific parameter
+        # updates inside the function.
+        logger.warning(
+            f"Re-populating m.fuelCost, m.generatorInvestmentCost, m.fixedCost, and m.varCost for year {b_inv.year}. These initialized parameters are overwritten using preprocessed data from m.mc.gen_data_target."
+        )
+        comps.repopulate_cost_parameters(m, b_inv.year)
 
         # Declare investment parameters, variables, and status
         # disjuncts for generators and transmission lines and storage,
@@ -407,6 +405,11 @@ def create_stages(
                         )
                         disp.add_dispatch_constraints(b_disp, dispatch_period)
 
+            if m.config["include_redispatch"]:
+                rep_period.add_time_links(b_rep)
+
+                for commitment_period in b_rep.commitmentPeriods:
+                    b_comm = b_rep.commitmentPeriod[commitment_period]
                     # =.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.=.
 
                     # [TODO: If commitment is neglected but dispatch
@@ -420,6 +423,7 @@ def create_stages(
                     # NOTE: If commitment is not included, generator state
                     # is fixed to 'on'; storage operational logic remains
                     # unchanged.
+
                     commit.add_commitment_disjuncts(b_comm, commitment_period)
 
                     # Adds cost-related commitment constraints

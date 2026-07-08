@@ -10,7 +10,7 @@
 # All rights reserved.  Please see the files COPYRIGHT.md and LICENSE.md
 # for full copyright and license information.
 #################################################################################
-
+import logging
 import pyomo.environ as pyo
 from pyomo.contrib.appsi.solvers.highs import Highs
 from pyomo.contrib.appsi.solvers.gurobi import Gurobi
@@ -19,6 +19,9 @@ from gtep.gtep_model import ExpansionPlanningModel
 from gtep.gtep_data import ExpansionPlanningData
 from gtep.gtep_solution import ExpansionPlanningSolution
 from gtep.gtep_data_processing import DataProcessing
+
+logger = logging.getLogger("gtep.driver_esr")
+logger.setLevel(logging.INFO)
 
 # Add data
 data_path = "./gtep/data/5bus"
@@ -52,10 +55,10 @@ candidate_gens = [
 
 data_processing_object = DataProcessing()
 data_processing_object.load_gen_data(
-    bus_data_path=bus_data_path,
-    cost_data_path=cost_data_path,
-    candidate_gens=candidate_gens,
-    save_csv=True,
+    bus_data_path,
+    cost_data_path,
+    ng_cost_path,
+    candidate_gens,
 )
 
 # Populate and create GTEP model
@@ -71,6 +74,7 @@ mod_object.config["scale_loads"] = True
 mod_object.config["transmission"] = True
 mod_object.config["storage"] = False
 mod_object.config["flow_model"] = "DC"
+mod_object.config["advanced_hydro"] = False
 
 mod_object.create_model()
 

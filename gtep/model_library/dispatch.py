@@ -37,6 +37,8 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
     r_p = c_p.parent_block()
     i_p = r_p.parent_block()
 
+    b.dispatchPeriod = dispatch_period
+
     # Add variables and bounds for generators and storage, when needed
     gens.add_dispatch_generators_variables(m, b)
 
@@ -66,8 +68,23 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
         return (
             b.thermalGeneration[gen]
             * pyo.units.convert(paramPeriodLength, to_units=u.hr)
-            * (m.varCost[gen] + m.fuelCost[gen])
+            * (m.generatorVariableCost[gen] + m.fuelCost[gen])
         )
+
+    if m.config["storage"]:
+        # Add storage variables and constraints. It also includes its
+        # operational costs variables.
+        stor.add_dispatch_storage_variables_and_constraints(m, b)
+
+    if m.config["advanced_hydro"]:
+
+        @b.Expression(m.hydroGenerators, doc="Hydro generators operational cost")
+        def hydroGeneratorCost(b, hydroGen):
+            return (
+                b.hydroGeneration[hydroGen]
+                * pyo.units.convert(paramPeriodLength, to_units=u.hr)
+                * m.generatorVariableCost[hydroGen]
+            )
 
     @b.Expression(m.renewableGenerators, doc="Cost per renewable generator in $")
     def renewableGeneratorCost(b, gen):
@@ -76,7 +93,7 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
         return (
             b.renewableGeneration[gen]
             * pyo.units.convert(paramPeriodLength, to_units=u.hr)
-            * m.varCost[gen]
+            * m.generatorVariableCost[gen]
         )
 
     if m.config["storage"]:
@@ -129,6 +146,12 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
     def thermalGenerationCostDispatch(b):
         return sum(b.thermalGeneratorCost[gen] for gen in m.thermalGenerators)
 
+    if m.config["advanced_hydro"]:
+
+        @b.Expression()
+        def hydroGenerationCostDispatch(b):
+            return sum(b.hydroGeneratorCost[gen] for gen in m.hydroGenerators)
+
     @b.Expression()
     def renewableGenerationCostDispatch(b):
         return sum(b.renewableGeneratorCost[gen] for gen in m.renewableGenerators)
@@ -161,7 +184,9 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
         # dispatch, the optimal solution has a value of 0. Check why
         # this is happening.]
         if m.config["storage"]:
-            storage_term = b.storageCostDispatch
+            storage_term = (
+                b.storageCostDispatch  # includes costs for charge and discharge
+            )
         else:
             storage_term = 0
 
@@ -172,10 +197,11 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
 
         return (
             b.thermalGenerationCostDispatch
+            + b.hydroGenerationCostDispatch
             + b.reactiveGenerationCostDispatch
             + b.renewableGenerationCostDispatch
             + b.loadShedCostDispatch
-            + b.curtailmentCostDispatch
+            # + b.curtailmentCostDispatch
             + storage_term
             + hydro_term
         )
@@ -272,12 +298,11 @@ def add_dispatch_constraints(b, disp_per):
                 balance += sum(
                     b.hydroGeneration[g] for g in gens if g in m.hydroGenerators
                 )
+            """ Battery Storage added to flow balance constraint """
+            if m.config["storage"]:
+                balance += sum(b.storageDischarged[bt] for bt in batts)
+                balance -= sum(b.storageCharged[bt] for bt in batts)
 
-            # Add battery storage to constraint
-            balance += sum(b.storageDischarged[bt] for bt in batts)
-            balance -= sum(b.storageCharged[bt] for bt in batts)
-
-            # Add the loads as a parameter (already includes units).
             balance -= sum(b.loads[l] for l in loads)
             balance += sum(b.loadShed[bus] for bus in buses)
 
@@ -322,14 +347,51 @@ def add_dispatch_constraints(b, disp_per):
             balance += b.loadShed[bus]
             return balance == 0 * u.MW
 
+    # print(f"{pyo.value(sum(m.loads[n] for n in m.loads)) = }")
+
     # NOTE: In comparison to reference [1], this is "per renewable
     # generator". [TODO: Should we include charging costs from
     # non-colocated plants?]
+    # @b.Constraint(m.renewableGenerators, doc="Capacity factor constraint")
+    # def capacity_factor(b, renewableGen):
+    #     is_candidate = str(renewableGen).endswith("-c")
+
+    #     # If investment is disabled, candidate renewable generators
+    #     # should not generate or curtail.
+    #     if not m.config["include_investment"] and is_candidate:
+    #         return (
+    #             b.renewableGeneration[renewableGen]
+    #             + b.renewableCurtailment[renewableGen]
+    #             == 0 * u.MW
+    #         )
+    #     else:
+    #         return (
+    #             b.renewableGeneration[renewableGen] + b.renewableCurtailment[renewableGen]
+    #             == c_p.renewableCapacityExpected[renewableGen]
+    #         )
     @b.Constraint(m.renewableGenerators, doc="Capacity factor constraint")
     def capacity_factor(b, renewableGen):
+        is_candidate = str(renewableGen).endswith("-c")
+
+        # If investment is disabled, keep the original equation for
+        # existing renewables and force candidate renewables to zero.
+        if not m.config["include_investment"] and is_candidate:
+            return (
+                b.renewableGeneration[renewableGen]
+                + b.renewableCurtailment[renewableGen]
+                == 0 * u.MW
+            )
+
+        expected_mw = pyo.value(
+            pyo.units.convert(
+                c_p.renewableCapacityExpected[renewableGen],
+                to_units=u.MW,
+            )
+        )
+
         return (
             b.renewableGeneration[renewableGen] + b.renewableCurtailment[renewableGen]
-            == c_p.renewableCapacityExpected[renewableGen]
+            <= expected_mw
         )
 
     # [TODO: Add renewableExtended to this and anywhere else.]

@@ -29,26 +29,28 @@ def add_commitment_parameters(b, commitment_period, investmentStage):
 
     m = b.model()
 
-    b.commitmentPeriodLength = pyo.Param(
-        within=pyo.PositiveReals, default=1, units=u.hr
-    )
     b.carbonTax = pyo.Param(default=0)
 
     # [ESR: Corrected to be in the commitment block "b", not in main
     # model "m".]
-    b.renewableCapacityExpected = {}
+    def renewable_capacity_expected_init(b, renewableGen):
+        p_max = m.md.data["elements"]["generator"][renewableGen]["p_max"]
 
-    units_renewable_capacity = u.MW
-    for renewableGen in m.renewableGenerators:
-        if type(m.md.data["elements"]["generator"][renewableGen]["p_max"]) == float:
-            b.renewableCapacityExpected[renewableGen] = 0 * units_renewable_capacity
+        if type(p_max) == float:
+            return 0
         else:
-            b.renewableCapacityExpected[renewableGen] = (
-                m.md.data["elements"]["generator"][renewableGen]["p_max"]["values"][
-                    commitment_period - 1
-                ]
-                * units_renewable_capacity
-            )
+            return p_max["values"][commitment_period - 1]
+
+    b.renewableCapacityExpected = pyo.Param(
+        m.renewableGenerators,
+        initialize=renewable_capacity_expected_init,
+        mutable=True,
+        units=u.MW,
+        doc="Expected renewable capacity for each renewable generator in this commitment period",
+    )
+    
+    if m.config["advanced_hydro"]:
+        hydro.fix_hydropower_limits(b, commitment_period)
 
     if m.config["advanced_hydro"]:
         hydro.fix_hydropower_limits(b, commitment_period)
@@ -60,7 +62,7 @@ def add_commitment_parameters(b, commitment_period, investmentStage):
         b,
         commitment_period,
         investmentStage,
-        scaling_value=10,
+        scaling_value=1,
     )
 
 
@@ -130,7 +132,7 @@ def add_commitment_constraints(b, comm_per):
         # generator and should be included to have consistent units.]
         if m.config["include_commitment"]:
             op_cost_gen_state = sum(
-                m.fixedCost[gen]
+                m.generatorFixedCost[gen]
                 * b.commitmentPeriodLength
                 * m.thermalCapacity[gen]
                 * (
@@ -158,6 +160,21 @@ def add_commitment_constraints(b, comm_per):
                     for gen in m.hydroGenerators
                 )
 
+            op_cost_gen_state += sum(
+                m.generatorFixedCost[gen]
+                * b.commitmentPeriodLength
+                * m.renewableCapacityNameplate[gen]
+                for gen in m.renewableGenerators
+            )
+
+            if m.config["advanced_hydro"]:
+                op_cost_gen_state += sum(
+                    m.generatorFixedCost[gen]
+                    * b.commitmentPeriodLength
+                    * m.hydroCapacity[gen]
+                    for gen in m.hydroGenerators
+                )
+
             return (
                 op_cost_dispatch
                 + op_cost_gen_state
@@ -166,14 +183,14 @@ def add_commitment_constraints(b, comm_per):
             )
         else:
             op_cost_gen_state = sum(
-                m.fixedCost[gen]
+                m.generatorFixedCost[gen]
                 * b.commitmentPeriodLength
                 * m.thermalCapacity[gen]
                 * b.genOn[gen].indicator_var.get_associated_binary()
                 for gen in m.thermalGenerators
             )
             op_cost_gen_state += sum(
-                m.fixedCost[gen]
+                m.generatorFixedCost[gen]
                 * b.commitmentPeriodLength
                 * m.renewableCapacityNameplate[gen]
                 for gen in m.renewableGenerators
@@ -181,7 +198,9 @@ def add_commitment_constraints(b, comm_per):
 
             if m.config["advanced_hydro"]:
                 op_cost_gen_state += sum(
-                    m.fixedCost[gen] * b.commitmentPeriodLength * m.hydroCapacity[gen]
+                    m.generatorFixedCost[gen]
+                    * b.commitmentPeriodLength
+                    * m.hydroCapacity[gen]
                     for gen in m.hydroGenerators
                 )
 
@@ -218,7 +237,9 @@ def add_investment_commitment_constraints(m, b, investment_stage):
             for com_per in b.representativePeriod[rep_per].commitmentPeriods:
                 renewableCurtailmentRep += (
                     m.weights[rep_per]
-                    * m.commitmentPeriodLength
+                    * b.representativePeriod[rep_per]
+                    .commitmentPeriod[com_per]
+                    .commitmentPeriodLength
                     * b.representativePeriod[rep_per]
                     .commitmentPeriod[com_per]
                     .renewableCurtailmentCommitment  # in MW

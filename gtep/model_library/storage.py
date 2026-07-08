@@ -16,6 +16,7 @@ Transmission Expansion Planning (GTEP) Model
 
 """
 
+import pandas as pd
 import pyomo.environ as pyo
 from pyomo.environ import units as u
 from pyomo.core.base.block import BlockData
@@ -350,19 +351,13 @@ def add_storage_state_disjuncts(b: BlockData):
 
 def add_investment_storage_constraints(m, b, investment_stage):
 
-    # Fix "in-service" batteries initial investment state based on
-    # input. [TODO: Initialize storage level (state of charge)]
-    for bat in m.storage:
-        if (
-            m.md.data["elements"]["storage"][bat]["in_service"] == False
-            and investment_stage == 1
-        ):
-            b.storOperational[bat].indicator_var.fix(False)
-        elif (
-            m.md.data["elements"]["storage"][bat]["in_service"] == True
-            and investment_stage == 1
-        ):
-            b.storOperational[bat].indicator_var.fix(True)
+    if not m.config["include_investment"]:
+        for stor in m.storage:
+            is_candidate = str(stor).endswith("-c")
+
+            if is_candidate:
+                b.storOperational[stor].indicator_var.fix(False)
+                b.storDisabled[stor].indicator_var.fix(True)
 
     @b.Expression(doc="Storage investment costs in $")
     def storage_investment_cost(b):
@@ -385,51 +380,48 @@ def add_investment_storage_constraints(m, b, investment_stage):
     # Add legacy equation below. This is not used in current version
     # of the model. [TODO: Check if we want to add this constraint in
     # future versions of the model.]
-    """ 
+    """
     # Initial, untested attempt for enforcing identical storage level
-    at beginning and end of representative periods. [TODO: Update to
-    use init and end batteryChargeLevel?]
-
+    # at beginning and end of representative periods. [TODO: Update to
+    # use init and end batteryChargeLevel?]
     @b.Constraint(
-    b.representativePeriods,
-    m.batteryStorageSystems,
-    doc="Enforces that we have identical storage level at the beginning and end of representative period",
+        b.representativePeriods,
+        m.batteryStorageSystems,
+        doc="Enforces that we have identical storage level at the beginning and end of representative period",
     )
     def consistent_battery_charge_level_commitment(b, rep_per, bat):
         return (
-
+            b.representativePeriod[rep_per]
+            .commitmentPeriod[
+                b.representativePeriod[rep_per]
+                .commitmentPeriods.first()
+            ]
+            .dispatchPeriod[
                 b.representativePeriod[rep_per]
                 .commitmentPeriod[
                     b.representativePeriod[rep_per]
                     .commitmentPeriods.first()
-                    ]
-                    .dispatchPeriod[
-                        b.representativePeriod[rep_per]
-                        .commitmentPeriod[
-                            b.representativePeriod[rep_per]
-                            .commitmentPeriods.first()
-                            ]
-                            .dispatchPeriods.first()
-                        ]
-                        .batteryChargeLevel[bat]
-                  ==
-                  b.representativePeriod[rep_per]
-                  .commitmentPeriod[
-                      b.representativePeriod[rep_per]
-                      .commitmentPeriods.last()
-                      ]
-                      .dispatchPeriod[
-                          b.representativePeriod[rep_per]
-                          .commitmentPeriod[
-                              b.representativePeriod[rep_per]
-                              .commitmentPeriods.last()
-                              ]
-                              .dispatchPeriods.last()
-                          ]
-                          .batteryChargeLevel[bat]
+                ]
+                .dispatchPeriods.first()
+            ]
+            .batteryChargeLevel[bat]
+            ==
+            b.representativePeriod[rep_per]
+            .commitmentPeriod[
+                b.representativePeriod[rep_per]
+                .commitmentPeriods.last()
+            ]
+            .dispatchPeriod[
+                b.representativePeriod[rep_per]
+                .commitmentPeriod[
+                    b.representativePeriod[rep_per]
+                    .commitmentPeriods.last()
+                ]
+                .dispatchPeriods.last()
+            ]
+            .batteryChargeLevel[bat]
         )
     """
-
 
 def add_storage_status_disjuncts(b, storage_set):
     """This method implements a Disjunction and its disjuncts to model
@@ -482,6 +474,14 @@ def add_storage_logical_constraints(m):
     across the investment stages.
 
     """
+
+    for stor in m.storage:
+        if m.md.data["elements"]["storage"][stor]["in_service"] == False:
+            m.investmentStage[1].storOperational[stor].indicator_var.fix(False)
+            m.investmentStage[1].storExtended[stor].indicator_var.fix(False)
+            m.investmentStage[1].storRetired[stor].indicator_var.fix(False)
+        else:
+            m.investmentStage[1].storDisabled[stor].indicator_var.fix(False)
 
     @m.LogicalConstraint(
         m.stages,
@@ -590,6 +590,9 @@ def add_storage_logical_constraints(m):
 def add_dispatch_storage_variables_and_constraints(b):
     m = b.model()
 
+    c_p = b.parent_block()
+    r_p = c_p.parent_block()
+
     # NOTE: The lower bound should be > 0 (from data input)
     def storage_capacity_limits(b, bat):
         return (
@@ -658,6 +661,65 @@ def add_dispatch_storage_variables_and_constraints(b):
     def storageCostDispatch(b):
         return sum(b.storageChargingCost[bat] for bat in m.storage) + sum(
             b.storageDischargingCost[bat] for bat in m.storage
+        )  # in $
+
+    # Declare initial values for battery capacity at the first
+    # dispatch period.
+    def init_storage_capacity(b, bat):
+        return m.initStorageChargeLevel[bat]  # in MWh
+
+    b.storageChargeLevel = pyo.Var(
+        m.storage,
+        domain=pyo.NonNegativeReals,
+        bounds=storage_capacity_limits,
+        initialize=init_storage_capacity,
+        units=u.MW * u.hr,
+    )
+
+    @b.Constraint(m.storage, doc="Storage state-of-charge balance")
+    def storage_state_of_charge_balance(b, bat):
+        disp_per = b.dispatchPeriod
+        commitment_period = c_p.commitmentPeriod
+
+        if disp_per != 1 and commitment_period != 1:
+            # If this is not the first dispatch period, use the previous
+            # dispatch period in the same commitment period.
+            previous_soc = c_p.dispatchPeriod[disp_per - 1].storageChargeLevel[bat]
+
+        elif disp_per == 1 and commitment_period != 1:
+            # If this is the first dispatch period of this commitment
+            # period, but not the first commitment period, use the
+            # final dispatch period from the previous commitment
+            # period.
+            previous_commitment = r_p.commitmentPeriod[commitment_period - 1]
+            previous_dispatch = previous_commitment.dispatchPeriods.at(-1)
+            previous_soc = previous_commitment.dispatchPeriod[
+                previous_dispatch
+            ].storageChargeLevel[bat]
+
+        else:
+            # If this is the first dispatch period of the first
+            # commitment period, use the initial state of charge from
+            # data.
+            # previous_soc = m.initStorageChargeLevel[bat]
+            previous_soc = m.storageCapacity[bat] / 2
+
+        return b.storageChargeLevel[bat] == (
+            m.storageRetentionRate[bat] * previous_soc
+            + m.storageChargingEfficiency[bat]
+            * b.storageCharged[bat]
+            * pyo.units.convert(b.dispatchPeriodLength, to_units=u.hr)
+            - m.storageDischargingEfficiency[bat]
+            * b.storageDischarged[bat]
+            * pyo.units.convert(b.dispatchPeriodLength, to_units=u.hr)
+        )
+
+    @b.Constraint(doc="Storage cap")
+    def total_storage_cap(b):
+        return (
+            sum(b.storageCharged[bat] for bat in m.storage)  # in MW
+            + sum(b.storageDischarged[bat] for bat in m.storage)  # in MW
+            <= m.storageDischargeLimit  # in MW
         )
 
     # [ESR: Add storage cap. Commented for now]

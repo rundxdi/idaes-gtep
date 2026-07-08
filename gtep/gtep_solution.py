@@ -17,1292 +17,1607 @@
 # date: 01/04/2024
 # Model available at http://www.optimization-online.org/DB_FILE/2017/08/6162.pdf
 
-from pyomo.environ import *
-from pyomo.environ import units as u
-from gtep.gtep_model import ExpansionPlanningModel
+import os
+import io
+import csv
+import sys
 import logging
-
 import json
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MaxNLocator
-import networkx as nx
 import pandas as pd
 import numpy as np
-import re
+from pathlib import Path
+from collections import namedtuple, defaultdict
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
+import pyomo.environ as pyo
+import pyomo.gdp as gdp
+from pyomo.environ import units as u
+from pyomo.core.base.param import IndexedParam
+from pyomo.core.base.expression import ScalarExpression, IndexedExpression
 
-from matplotlib.patches import Rectangle, RegularPolygon, PathPatch
-from matplotlib.collections import PatchCollection
-import matplotlib.cm as cm
-from matplotlib.transforms import Affine2D
-from matplotlib.colors import Normalize
-import matplotlib.path as mpath
+import squarify
+
+import plotly.graph_objects as go
 
 logger = logging.getLogger(__name__)
 
 
 # [TODO] inject units into plots
 class ExpansionPlanningSolution:
-    """A class that stores the solution to the ExpansionPlanningModel class for writing and visualization."""
+    """A class that stores the solution to the ExpansionPlanningModel
+    class for writing and visualization."""
 
-    def __init__(self):
-        pass
+    def __init__(self, data_path):
+        self.gen_df = pd.read_csv(f"{data_path}/gen.csv")
+        self.gen_types = {
+            gen_type: self.gen_df[self.gen_df["Unit Type"] == gen_type]["PMax MW"].sum()
+            for gen_type in set(self.gen_df["Unit Type"])
+        }
 
     def load_from_file(self):
         pass
 
-    def load_from_model(self, gtep_model):
-        if type(gtep_model) is not ExpansionPlanningModel:
-            logger.warning(
-                f"Solutions must be loaded from ExpansionPlanningModel objects, not %s"
-                % type(gtep_model)
-            )
-            raise ValueError
-        if gtep_model.results is None:
-            raise ValueError(
-                "ExpansionPlanningSolution objects loaded from model must have a results component."
-            )
-        self.results = gtep_model.results  # Highs results object
-        self.stages = gtep_model.stages  # int
-        self.formulation = gtep_model.formulation  # None (???)
-        self.data = gtep_model.data  # ModelData object
-        self.num_reps = gtep_model.num_reps  # int
-        self.len_reps = gtep_model.len_reps  # int
-        self.num_commit = gtep_model.num_commit  # int
-        self.num_dispatch = gtep_model.num_dispatch  # int
+    def save_results_in_json_files(self, gtep_model, dir_name):
 
-        self.expressions = {
-            expr.name: value(expr)
-            for expr in gtep_model.model.component_data_objects(Expression)
-            if ("Commitment" in expr.name) or ("Investment" in expr.name)
+        folder_name = dir_name
+        m = gtep_model.model
+
+        valid_names = ["Inst", "Oper", "Disa", "Ext", "Ret"]
+        renewable_investments = {}
+        dispatchable_investments = {}
+        load_shed = {}
+        power_flow = {}
+        generation = {}
+        curtailment = {}
+        reserves = {}
+        charging = {}
+        discharging = {}
+        for var in m.component_objects(pyo.Var, descend_into=True):
+            for index in var:
+                if "Shed" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        load_shed[var.name + "." + str(index)] = pyo.value(var[index])
+                elif "Reserve" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        reserves[var.name + "." + str(index)] = pyo.value(var[index])
+                elif "Flow" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        power_flow[var.name + "." + str(index)] = pyo.value(var[index])
+                elif "Generation" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        generation[var.name + "." + str(index)] = pyo.value(var[index])
+                elif "Curtailment" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        curtailment[var.name + "." + str(index)] = pyo.value(var[index])
+                elif "storageCharged" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        charging[var.name + "." + str(index)] = pyo.value(var[index])
+                elif "storageDischarge" in var.name:
+                    if pyo.value(var[index]) >= 0.001:
+                        discharging[var.name + "." + str(index)] = pyo.value(var[index])
+                for name in valid_names:
+                    if name in var.name:
+                        if pyo.value(var[index]) >= 0.001:
+                            renewable_investments[var.name + "." + str(index)] = (
+                                pyo.value(var[index])
+                            )
+        for var in m.component_objects(gdp.Disjunct, descend_into=True):
+            for index in var:
+                for name in valid_names:
+                    if name in var.name:
+                        if pyo.value(var[index].indicator_var) == True:
+                            dispatchable_investments[var.name + "." + str(index)] = (
+                                pyo.value(var[index].indicator_var)
+                            )
+
+        costs = {}
+        for exp in m.component_objects(pyo.Expression, descend_into=True):
+            if "Cost" in exp.name or "cost" in exp.name:
+                if type(exp) is ScalarExpression:
+                    costs[exp.name] = pyo.value(exp)
+            if type(exp) is IndexedExpression:
+                for e in exp:
+                    costs[exp[e].name] = pyo.value(exp[e])
+
+        loads = {}
+        for param in m.component_objects(pyo.Param, descend_into=True):
+            if "commitment" in param.name and "loads" in param.name:
+                if type(param) is IndexedParam:
+                    for p in param:
+                        loads[param[p].name] = pyo.value(param[p])
+
+        # Output file names
+        output_files = {
+            "renewable_investments": renewable_investments,
+            "dispatchable_investments": dispatchable_investments,
+            "load_shed": load_shed,
+            "costs": costs,
+            "flows": power_flow,
+            "generation": generation,
+            "curtailment": curtailment,
+            "loads": loads,
+            "reserves": reserves,
+            "charging": charging,
+            "discharging": discharging,
         }
 
-    def import_data_object(self, data_obj):
-        self.data = data_obj.md
+        if not os.path.exists(folder_name):
+            os.makedirs(folder_name)
+
+        for name, data in output_files.items():
+            filename = f"{folder_name}/{name}.json"
+            with open(filename, "w") as fil:
+                json.dump(data, fil)
+
+        print(" -> The following files have been created in '{}':".format(folder_name))
+        for name in output_files:
+            print(f" - {folder_name}/{name}.json")
 
     def read_json(self, filepath):
-        # read a json file and recover a solution primals
+        # Read a json file
         json_filepath = Path(filepath)
         with open(json_filepath, "r") as fobj:
             json_read = json.loads(fobj.read())
-        self.primals_tree = json_read["results"]["primals_tree"]
 
-    def dump_json(self, filename="./gtep_solution_jscTest.json"):
-        # def dump_json(self, filename="./gtep_solution.json"):
+        return json_read
 
-        dump_filepath = Path(filename)
-        with open(dump_filepath, "w") as fobj:
-            json.dump(self._to_dict(), fobj)
+    def to_dict(self, dict_in):
+        """Converts a flat dictionary with dot-separated keys into a
+        nested dictionary: {time_key: {state: {gen_key: value}}}
 
-    def _to_dict(self) -> dict:
+        Ignores entries where the second part of the key is 'branch'.
 
-        results_dict = {
-            "solution_loader": self.results.solution_loader,  # object
-            "termination_condition": self.results.termination_condition,  # object
-            "best_feasible_objective": self.results.best_feasible_objective,
-            "best_objective_bound": self.results.best_objective_bound,
-            "wallclock_time": self.results.wallclock_time,
-            "expressions": self.expressions,
-        }
+        """
 
-        # "best_feasible_objective", "best_objective_bound", and "wallclock_time" are all numbers, dont need subhandlers
+        ignore_this = "branch"
+        out_dict = {}
 
-        # subhandle "termination_condition"
-        results_dict["termination_condition"] = {
-            "value": self.results.termination_condition.value,
-            "name": self.results.termination_condition.name,
-        }
-
-        # subhandle "solution_loader"
-        results_dict["solution_loader"] = {"primals": {}}
-
-        for key, val in self.results.solution_loader.get_primals()._dict.items():
-            tmp_key = key
-
-            # handle binary vars by delving one layer in
-            results_dict["solution_loader"]["primals"][tmp_key] = {
-                "name": val[0].name,
-                "value": val[0].value,
-                "bounds": val[0].bounds,
-            }
-
-            # handle binary
-            if val[0].is_binary():
-                results_dict["solution_loader"]["primals"][tmp_key]["is_binary"] = val[
-                    0
-                ].is_binary()
-            # handle units, sometimes they dont have anything
-            if val[0].get_units() is not None:
-                results_dict["solution_loader"]["primals"][tmp_key]["units"] = (
-                    val[0].get_units().name
-                )
-            else:
-                results_dict["solution_loader"]["primals"][tmp_key]["units"] = val[
-                    0
-                ].get_units()
-
-        # renest "termination_condition" as a json-friendly dictionary
-        # things are either vars (which have some sort of signifier in [] brackets) or are an attribute, which dont
-        # the name variable will give it away
-        results_dict["primals_tree"] = {}
-        results_dict["expressions_tree"] = {}
-
-        for key, val in self.results.solution_loader.get_primals()._dict.items():
-            # split the name to figure out depth
-            split_name = val[0].name.split(".")
-
-            # start at the bottom and nest accordingly
-            tmp_dict = {
-                "name": val[0].name,
-                "value": val[0].value,
-                "bounds": val[0].bounds,
-            }
-
-            # handle binary
-            if val[0].is_binary():
-                tmp_dict["is_binary"] = val[0].is_binary()
-
-            # handle units, sometimes they dont have anything
-            if val[0].get_units() is not None:
-                tmp_dict["units"] = val[0].get_units().name
-            else:
-                tmp_dict["units"] = val[0].get_units()
-
-            # allocate the nested dictionary
-            def nested_set(this_dict, key, val):
-                if len(key) > 1:
-                    # check if it's a binary var and pull up one layer
-                    if key[1] == "binary_indicator_var":
-                        this_dict[key[0]] = val
-                    else:
-                        this_dict.setdefault(key[0], {})
-                        nested_set(this_dict[key[0]], key[1:], val)
-                else:
-                    this_dict[key[0]] = val
-
-            nested_set(results_dict["primals_tree"], split_name, tmp_dict)
-
-        pass
-
-        for key, val in self.expressions.items():
+        for key, val in dict_in.items():
             # split the name to figure out depth
             split_name = key.split(".")
 
-            # start at the bottom and nest accordingly
-            tmp_dict = {"value": val}
+            if ignore_this not in split_name[1]:
+                # set toplevel defaults
+                out_dict.setdefault(split_name[0], {})
 
-            # allocate the nested dictionary
-            def nested_set(this_dict, key, val):
-                if len(key) > 1:
-                    # check if it's a binary var and pull up one layer
-                    this_dict.setdefault(key[0], {})
-                    nested_set(this_dict[key[0]], key[1:], val)
-                else:
-                    this_dict[key[0]] = val
+                # split things by a predefined prefix
+                out_dict[split_name[0]].setdefault(split_name[1], {})
 
-            nested_set(results_dict["expressions_tree"], split_name, tmp_dict)
-        # split out expressions
-        self.expressions_tree = results_dict["expressions_tree"]
-
-        # mint the final dictionary to save
-        out_dict = {
-            "data": self.data.representative_data[0].data,
-            "results": results_dict,
-        }
-
-        self.primals_tree = results_dict["primals_tree"]
+                # specific_key = split_name[1].split(subsplit_key, 1)[1]
+                specific_key = "".join(split_name[2:])
+                out_dict[split_name[0]][split_name[1]][specific_key] = val
 
         return out_dict
 
-    def discover_level_relationships(self, dispatch_level_dict):
-        list_of_keys = list(dispatch_level_dict.keys())
+    def create_plots(self, case_json, results_path, data_path, plot_type="all"):
+        """This function reads a solution .json file, uses gen.csv and
+        candidate_generators_initial_list.csv to map generator UIDs to
+        unit types and PMax MW, and generates a stacked bar plot of
+        generation mix by investment year.
 
-        relationships_dict = {}
-        # go through each key and split them into categories and names
-        # each name should have a handful of categories, which should be the same across a group of names
-        for this_key in list_of_keys:
-            # check if it has a bracketed relationship, and if it does go ahead, otherwise skip
-            try:
-                primal_category = this_key.split("[")[0]
-                primal_name = this_key.split("[")[1].split("]")[0]
-                relationships_dict.setdefault(primal_name, set())
-                relationships_dict[primal_name].add(primal_category)
+        """
 
-            except IndexError as iEx:
-                print(
-                    f'[WARNING] discover_level_relationships has encountered an error: Attempted to split out {this_key}, failed with error: "{iEx}". Assigning as axuilary.'
-                )
+        plots_dir = os.path.join(results_path, "plots")
+        os.makedirs(plots_dir, exist_ok=True)
+        print(f" Created the subdirectory '{plots_dir}' to save the plots.")
 
-        # convert sets to frozensets to be hashable
-        for this_key in relationships_dict:
-            relationships_dict[this_key] = frozenset(relationships_dict[this_key])
+        GenerationType = namedtuple("GenerationType", ["label", "color"])
+        # GENERATION_TYPES = {
+        #     "CC": GenerationType("Gas CC", "#20b2aa"),
+        #     "CT": GenerationType("Gas CT", "#6e8b3d"),
+        #     "PV": GenerationType("Solar", "#ffb90f"),
+        #     "NUC": GenerationType("Nuclear", "#39FF14"),
+        #     "STEAM": GenerationType("Steam", "#b0b0b0"),
+        #     "THERMAL": GenerationType("Thermal", "#e25822"),
+        #     "COAL": GenerationType("Coal", "#333333"),
+        #     "WIND": GenerationType("Wind", "#4f94cd"),
+        #     "DR": GenerationType("Demand Response", "#a020f0"),
+        #     "HYDRO": GenerationType("Hydro", "#00bfff"),
+        #     "BATTERY": GenerationType("Battery", "#25ccff"),
+        # }
+        tab20 = plt.get_cmap("tab20")
+        GENERATION_TYPES = {
+            "CC": GenerationType("Gas CC", mcolors.to_hex(tab20(1))),
+            "CT": GenerationType("Gas CT", mcolors.to_hex(tab20(3))),
+            "COAL": GenerationType("Coal", mcolors.to_hex(tab20(5))),
+            "NUC": GenerationType("Nuclear", mcolors.to_hex(tab20(2))),
+            "PV": GenerationType("Solar", mcolors.to_hex(tab20(9))),
+            "WIND": GenerationType("Wind", mcolors.to_hex(tab20(11))),
+            "THERMAL": GenerationType("Thermal", mcolors.to_hex(tab20(13))),
+            "STEAM": GenerationType("Steam", mcolors.to_hex(tab20(14))),
+            "HYDRO": GenerationType("Hydro", mcolors.to_hex(tab20(19))),
+            "BATTERY": GenerationType("Battery", mcolors.to_hex(tab20(15))),
+            "ES4": GenerationType("ES4", mcolors.to_hex(tab20(17))),
+            "PS": GenerationType("Pumped Storage", mcolors.to_hex(tab20(19))),
+            "DR": GenerationType("Demand Response", mcolors.to_hex(tab20(18))),
+        }
 
-        # now go through each primal name and check for the groups who match
-        matching_groups_dict = {}
-        for this_primal_name, this_primal_set in relationships_dict.items():
-            matching_groups_dict.setdefault(this_primal_set, set())
-            matching_groups_dict[this_primal_set].add(this_primal_name)
+        def get_gen_arrays(gen_case_json, results_path, data_path, GENERATION_TYPES):
 
-        return matching_groups_dict
-
-    def _level_relationship_dict_to_df_workhorse(
-        self, level_key, timeseries_dict, keys_of_interest, vars_of_interest
-    ):
-        df_data_dict = {}
-        units_dict = {}
-        # set our defaults
-        df_data_dict.setdefault(level_key, [])
-        for this_koi in keys_of_interest:
-            for this_voi in vars_of_interest:
-                df_data_dict.setdefault(f"{this_koi}_{this_voi}_value", [])
-                df_data_dict.setdefault(f"{this_koi}_{this_voi}_lower_bound", [])
-                df_data_dict.setdefault(f"{this_koi}_{this_voi}_upper_bound", [])
-
-        # dump data into dict to read into df
-        for period_dict in timeseries_dict:
-            df_data_dict[level_key].append(period_dict["period_number"])
-            for this_koi in keys_of_interest:
-                for this_voi in vars_of_interest:
-                    # check if this is a variable by checking if it has a "value"
-                    if "value" in period_dict["primals_by_name"][this_koi][this_voi]:
-                        # if its an integer, cast it as a boolean for now
-                        if (
-                            "is_binary"
-                            in period_dict["primals_by_name"][this_koi][this_voi]
-                        ):
-                            if period_dict["primals_by_name"][this_koi][this_voi][
-                                "is_binary"
-                            ]:
-                                df_data_dict[f"{this_koi}_{this_voi}_value"].append(
-                                    bool(
-                                        round(
-                                            period_dict["primals_by_name"][this_koi][
-                                                this_voi
-                                            ]["value"]
-                                        )
-                                    )  # have to cast to int because there are floating point errors
-                                )
-                                units_dict.setdefault(
-                                    f"{this_koi}_{this_voi}_value",
-                                    period_dict["primals_by_name"][this_koi][this_voi][
-                                        "units"
-                                    ],
-                                )
-                            else:
-                                df_data_dict[f"{this_koi}_{this_voi}_value"].append(
-                                    period_dict["primals_by_name"][this_koi][this_voi][
-                                        "value"
-                                    ]
-                                )
-                                units_dict.setdefault(
-                                    f"{this_koi}_{this_voi}_value",
-                                    period_dict["primals_by_name"][this_koi][this_voi][
-                                        "units"
-                                    ],
-                                )
-                        else:
-                            df_data_dict[f"{this_koi}_{this_voi}_value"].append(
-                                period_dict["primals_by_name"][this_koi][this_voi][
-                                    "value"
-                                ]
-                            )
-                            units_dict.setdefault(
-                                f"{this_koi}_{this_voi}_value",
-                                period_dict["primals_by_name"][this_koi][this_voi][
-                                    "units"
-                                ],
-                            )
-                        df_data_dict[f"{this_koi}_{this_voi}_lower_bound"].append(
-                            period_dict["primals_by_name"][this_koi][this_voi][
-                                "bounds"
-                            ][0]
-                        )
-                        units_dict.setdefault(
-                            f"{this_koi}_{this_voi}_value",
-                            period_dict["primals_by_name"][this_koi][this_voi]["units"],
-                        )
-                        df_data_dict[f"{this_koi}_{this_voi}_upper_bound"].append(
-                            period_dict["primals_by_name"][this_koi][this_voi][
-                                "bounds"
-                            ][1]
-                        )
-                        units_dict.setdefault(
-                            f"{this_koi}_{this_voi}_value",
-                            period_dict["primals_by_name"][this_koi][this_voi]["units"],
-                        )
-
-        # try to make a DF, and if not just pass back an empty
-        try:
-            data_df = pd.DataFrame(df_data_dict)
-            # fix any Nones and make them NaNs
-            data_df = data_df.fillna(value=np.nan)
-            return data_df, units_dict
-        except ValueError as vEx:
-            print(
-                f"[WARNING] _level_relationship_dict_to_df_workhorse attempted to create dataframe and failed: {vEx}"
+            # Read gen and candidate_gen .csv files for GEN UID to map for
+            # Unit Type and PMax MW
+            gen_df = pd.read_csv(f"{data_path}/gen.csv")
+            gen_uid_to_type = {
+                row["GEN UID"]: row["Unit Type"].upper() for _, row in gen_df.iterrows()
+            }
+            gen_uid_to_pmax = {
+                row["GEN UID"]: float(row["PMax MW"]) for _, row in gen_df.iterrows()
+            }
+            gen_cand_df = pd.read_csv(
+                f"{data_path}/candidate_generators_initial_list.csv"
             )
-            return pd.DataFrame(), {}
+            gen_cand_uid_to_type = {
+                row["GEN UID"]: row["Unit Type"].upper()
+                for _, row in gen_cand_df.iterrows()
+            }
+            gen_cand_uid_to_pmax = {
+                row["GEN UID"]: float(row["PMax MW"])
+                for _, row in gen_cand_df.iterrows()
+            }
 
-    def _plot_workhorse_relational(
-        self,
-        level_key,
-        df,
-        keys,
-        vars,
-        parent_key_string,
-        pretty_title="Selected Data",
-        plot_bounds=False,
-        save_dir=".",
-        aspect_ratio=1,
-    ):
+            # Read storage.csv for storage units
+            storage_df = pd.read_csv(f"{data_path}/storage.csv")
+            storage_uid_to_type = {
+                row["name"]: row["storage_type"].upper()
+                for _, row in storage_df.iterrows()
+            }
+            storage_uid_to_pmax = {
+                row["name"]: float(row.get("energy_capacity", 0))
+                for _, row in storage_df.iterrows()
+            }
 
-        # figure out how big the plot needs to be
-        gridspec_height = 2 * max(len(keys), len(vars))
-        gridspec_width = 2
-        fig_width_padding = 0
-        fig_height_padding = 0
-        max_figheight = 48
-        total_periods = len(df[level_key])
-        key_gridspec_div = floor(
-            gridspec_height / len(keys)
-        )  # number of gridspec heights a key plot can be
-        var_gridspec_div = floor(
-            gridspec_height / len(vars)
-        )  # number of gridspec heights a var plot can be
+            # Read and process .json. These names are based on the saved
+            # .json files from function save_results_in_json_files
+            if gen_case_json == "renewables":
+                json_file = f"{results_path}/renewable_investments.json"
+            elif gen_case_json == "dispatchables":
+                json_file = f"{results_path}/dispatchable_investments.json"
+            else:
+                print("WARNING: Case not debugged")
 
-        # to make things look nice, we dont want height or width to be more than twice the other
-        fig_width = (total_periods * gridspec_width * 4) + fig_width_padding
-        fig_width = min(max_figheight, fig_width)
-        fig_height = (2 * gridspec_height) + fig_height_padding
-        if fig_width / fig_height > aspect_ratio:
-            fig_height = floor(fig_width / aspect_ratio)
-        elif fig_height / fig_width > aspect_ratio:
-            fig_width = floor(fig_height / aspect_ratio)
+            dict_in = self.to_dict(self.read_json(json_file))
+            time_keys = list(dict_in.keys())
 
-        # set up plot
-        fig = plt.figure(
-            figsize=(fig_width, fig_height), tight_layout=False
-        )  # (32, 16) works will for 4 plots tall and about 6 periods wide per plot
-        gs = fig.add_gridspec(gridspec_height, gridspec_width)
-        # plot out the keys of interest
-        ax_koi_list = []
-        for ix_koi, this_koi in enumerate(keys):
-            ax_koi = fig.add_subplot(
-                gs[(ix_koi * key_gridspec_div) : ((ix_koi + 1) * key_gridspec_div), 0]
-            )
-            ax_koi_list.append(ax_koi)
+            # Collect all generator keys
+            states_set = set()
+            keys_set = set()
+            for this_time_key in time_keys:
+                states_set.update(dict_in[this_time_key].keys())
+                for this_state in dict_in[this_time_key].keys():
+                    keys_set.update(dict_in[this_time_key][this_state].keys())
 
-            for _, this_voi in enumerate(vars):
-                ax_koi.plot(
-                    df[level_key],
-                    df[f"{this_koi}_{this_voi}_value"],
-                    label=f"{this_koi}_{this_voi}",
-                    marker="o",
-                )
-                if plot_bounds:
-                    ax_koi.fill_between(
-                        df[level_key],
-                        df[f"{this_koi}_{this_voi}_lower_bound"],
-                        df[f"{this_koi}_{this_voi}_upper_bound"],
-                        alpha=0.1,
+            # Map generator keys to canonical unit types and PMax MW
+            gens_keys_to_type = {}
+            gens_keys_to_pmax = {}
+            for this_key in list(keys_set):
+                if this_key in gen_cand_uid_to_type:
+                    unit_type = gen_cand_uid_to_type[this_key]
+                    pmax = gen_cand_uid_to_pmax[this_key]
+                elif this_key in gen_uid_to_type:
+                    unit_type = gen_uid_to_type.get(this_key)
+                    pmax = gen_uid_to_pmax.get(this_key)
+                elif this_key in storage_uid_to_type:
+                    unit_type = storage_uid_to_type[this_key]
+                    pmax = storage_uid_to_pmax[this_key]
+                else:
+                    unit_type = None
+                    pmax = 0
+
+                # Make unit_type uppercase to ensure case-insensitive
+                # matching
+                unit_type_upper = unit_type.upper() if unit_type else None
+
+                # Only use if in GENERATION_TYPES
+                if unit_type_upper and unit_type_upper in GENERATION_TYPES:
+                    gens_keys_to_type[this_key] = unit_type_upper
+                    gens_keys_to_pmax[this_key] = pmax
+                else:
+                    raise ValueError(
+                        f"[ERROR] Generator or storage '{this_key}' has unknown or unsupported unit type '{unit_type}'."
                     )
 
-            ax_koi.set_ylabel("Value $[n]$")
-            ax_koi.xaxis.set_major_locator(MaxNLocator(integer=True))
-            ax_koi.legend()
+            # After building gens_keys_to_type
+            unique_types = set(gens_keys_to_type.values())
+            gen_types_sorted = sorted(unique_types)  # Alphabetical order
 
-        # label axes
-        ax_koi_list[-1].set_xlabel(f"{level_key} $[n]$")
-        ax_koi_list[0].set_title(f"{pretty_title} by Type")
-
-        # plot variables of interest
-        ax_voi_list = []
-        # plot generations and curtailments against each other
-        for ix_voi, this_voi in enumerate(vars):
-            ax_voi = fig.add_subplot(
-                gs[(ix_voi * var_gridspec_div) : ((ix_voi + 1) * var_gridspec_div), 1]
+            # Read the DAY_AHEAD .csv file with the year column and get
+            # unique years in order of appearance
+            time_periods_df = pd.read_csv(f"{data_path}/DAY_AHEAD_renewables.csv")
+            time_periods = (
+                time_periods_df["Year"].drop_duplicates().astype(str).tolist()
             )
-            ax_voi_list.append(ax_voi)
-            for this_koi in keys:
-                ax_voi.plot(
-                    df[level_key],
-                    df[f"{this_koi}_{this_voi}_value"],
-                    label=f"{this_koi}_{this_voi}",
-                    marker="o",
-                )
-                if plot_bounds:
-                    ax_voi.fill_between(
-                        df[level_key],
-                        df[f"{this_koi}_{this_voi}_lower_bound"],
-                        df[f"{this_koi}_{this_voi}_upper_bound"],
-                        alpha=0.1,
+
+            # Build gen_mix using PMax MW and solution values
+            gen_mix = {tp: {gt: 0.0 for gt in gen_types_sorted} for tp in time_periods}
+            for tp in time_periods:
+                for k, val in dict_in.items():
+                    for state, gen_dict in val.items():
+                        for gen, value in gen_dict.items():
+                            unit_type = gens_keys_to_type.get(gen)
+                            if gen_case_json == "dispatchables":
+                                pmax = gens_keys_to_pmax.get(gen, 0.0)
+                                if unit_type in gen_mix[tp]:
+                                    gen_mix[tp][unit_type] += pmax * value
+                            elif gen_case_json == "renewables":
+                                if unit_type in gen_mix[tp]:
+                                    gen_mix[tp][unit_type] += value
+
+            gen_mix_arrays = {
+                k: np.array([gen_mix[stage].get(k, 0.0) for stage in gen_mix.keys()])
+                for k in gen_types_sorted
+            }
+            # print('gen_mix_arrays:', gen_mix_arrays)
+
+            return gen_mix, gen_mix_arrays, time_periods
+
+        # Define multiple functions to create interactive Plotly plots
+        # for the generation mix: a stack plot, a pie chart, and a
+        # treemap. The user can select which one to use by setting up
+        # the plot_type option. By default, this function will plot
+        # all if no value is given.
+        def plotly_stackplot_gen_mix(
+            time_periods, gen_mix_arrays, GENERATION_TYPES, results_path, case_json
+        ):
+            """This function creates an interactive Plotly stacked bar
+            chart of generation mix by investment year and saves it as
+            an HTML file.
+
+            """
+
+            # Prepare the bottom (cumulative sum) for stacking
+            fig = go.Figure()
+            bottom = np.zeros(len(time_periods))
+
+            for gen_class, mix_array in gen_mix_arrays.items():
+                if gen_class in GENERATION_TYPES:
+                    component_label = GENERATION_TYPES[gen_class].label
+                    component_color = GENERATION_TYPES[gen_class].color
+                    fig.add_bar(
+                        x=time_periods,
+                        y=mix_array,
+                        name=component_label,
+                        marker_color=component_color,
                     )
 
-            ax_voi.set_ylabel("Value $[n]$")
-            ax_voi.xaxis.set_major_locator(MaxNLocator(integer=True))
-            ax_voi.legend()
-
-        # label axes
-        ax_voi_list[-1].set_xlabel(f"{level_key} $[n]$")
-        ax_voi_list[0].set_title(f"{pretty_title} by Category")
-
-        fig.align_labels()
-        fig.suptitle(f"{parent_key_string}")
-        fig.savefig(
-            f"{save_dir}{parent_key_string}_{pretty_title.replace(' ', '_')}.png"
-        )
-        plt.close()
-
-    def _plot_workhorse_binaries(
-        self,
-        level_key,
-        df,
-        keys,
-        vars,
-        parent_key_string,
-        pretty_title="Selected Data",
-        save_dir=".",
-    ):
-
-        fig = plt.figure(figsize=(32, 16), tight_layout=False)
-        gs = fig.add_gridspec(1, 1)  # only need 1 plot for now
-        # if all the variables are binaries, we can assume that the vars are all binaries and the keys are all categories
-        total_height = len(vars)
-        interstate_height = 1.0 / (len(keys) + 2)
-        width = 1
-        width_padding = 0.05
-        ax_bins = fig.add_subplot(gs[:, :])
-        ax_bins.set_ylim([-0.5, total_height - 0.5])  # set ylims to support bools
-        ax_bins.set_xlim([0.5, len(df[level_key]) + 0.5])  # set xlims to support bools
-        ax_bins.set_yticklabels([None] + list(vars))
-        ax_bins.yaxis.set_major_locator(MaxNLocator(integer=True))
-        ax_bins.xaxis.set_major_locator(MaxNLocator(integer=True))
-        for axline_ix in range(total_height):
-            ax_bins.axhline(
-                axline_ix + 0.5, color="grey", linewidth=3
-            )  # draw a separator line between each level
-        for axline_ix in range(len(df[level_key])):
-            ax_bins.axvline(
-                axline_ix + 0.5,
-                color="grey",
-                linewidth=3,
-                linestyle="dotted",
-                alpha=0.5,
-            )  # draw a separator line between each level
-
-        for ix_key, this_koi in enumerate(keys):
-            # make a dummy line to steal the color cycler and make a single item for the legend
-            (line,) = ax_bins.plot([None], [None], label=f"{this_koi}", linewidth=5)
-            for ix_var, this_voi in enumerate(vars):
-                for tx, is_it_on in zip(
-                    df[level_key], df[f"{this_koi}_{this_voi}_value"]
-                ):
-                    if is_it_on:
-                        tmp_rect = plt.Rectangle(
-                            [
-                                tx - 0.5 + width_padding,
-                                ((ix_var) + (interstate_height * (ix_key + 1))) - 0.5,
-                            ],
-                            width - (width_padding * 2),
-                            interstate_height,
-                            alpha=0.9,
-                            edgecolor="black",
-                            color=line.get_color(),
-                        )
-                        ax_bins.add_patch(tmp_rect)
-
-        ax_bins.set_xlabel(f"{level_key} $[n]$")
-        ax_bins.set_title("State Variable Time History")
-        ax_bins.set_ylabel("Binary State")
-        ax_bins.legend()
-
-        fig.align_labels()
-        fig.suptitle(f"{parent_key_string}")
-        fig.savefig(
-            f"{save_dir}{parent_key_string}_{pretty_title.replace(' ', '_')}.png"
-        )
-        plt.close()
-
-    def _level_relationship_df_to_plot(
-        self,
-        level_key,
-        df,
-        keys,
-        vars,
-        parent_key_string,
-        pretty_title="Selected Data",
-        plot_bounds=False,
-        save_dir=".",
-        config={},
-    ):
-
-        # [HACK] hard coding the generator state order, to be fixed later
-        config["order_gen_state"] = ["genOff", "genShutdown", "genStartup", "genOn"]
-        config["order_gen_invest_state"] = [
-            "genDisabled",
-            "genRetired",
-            "genExtended",
-            "genInstalled",
-            "genOperational",
-        ]
-        config["order_branch_invest_state"] = [
-            "branchDisabled",
-            "branchRetired",
-            "branchExtended",
-            "branchInstalled",
-            "branchOperational",
-        ]
-
-        # check if ALL the possible things to look at are binaries
-        all_binaries = True
-        for ix, this_voi in enumerate(vars):
-            for _, this_koi in enumerate(keys):
-                if not (df[f"{this_koi}_{this_voi}_value"].dtype == "bool"):
-                    all_binaries = False
-                    break
-        if all_binaries:
-
-            # check the config to see if we have any overrides
-            if "order_gen_state" in config:
-                # check that everything can be mapped over
-                matched_config_override = True
-                for item in vars:
-                    if not item in config["order_gen_state"]:
-                        matched_config_override = False
-                        break
-                if matched_config_override:
-                    vars = config["order_gen_state"]
-            if "order_gen_invest_state" in config:
-                # check that everything can be mapped over
-                matched_config_override = True
-                for item in vars:
-                    if not item in config["order_gen_invest_state"]:
-                        matched_config_override = False
-                        break
-                if matched_config_override:
-                    vars = config["order_gen_invest_state"]
-            if "order_branch_invest_state" in config:
-                # check that everything can be mapped over
-                matched_config_override = True
-                for item in vars:
-                    if not item in config["order_branch_invest_state"]:
-                        matched_config_override = False
-                        break
-                if matched_config_override:
-                    vars = config["order_branch_invest_state"]
-
-            self._plot_workhorse_binaries(
-                level_key, df, keys, vars, parent_key_string, pretty_title, save_dir
+            fig.update_layout(
+                barmode="relative",
+                title="Generation Mix",
+                xaxis_title="Investment Year",
+                yaxis_title="Nameplate Capacity [MW]",
+                legend=dict(
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.02,
+                    font=dict(size=14),
+                ),
+                width=1200,
+                height=600,
+                plot_bgcolor="white",
             )
+            fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor="lightgray")
+            fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor="lightgray")
+
+            # Save as an interactive HTML
+            plot_path = f"{results_path}/plots/investment_{case_json}_gen_mix_summary_interactive.html"
+            fig.write_html(f"{plot_path}")
+            print(f" -> Saved interactive stack plot for generation mix to {plot_path}")
+
+        def plotly_treemap_gen_mix(
+            gen_mix, GENERATION_TYPES, results_path, case_json, small_pct_threshold=5
+        ):
+            """This function creates and saves an interactive Plotly
+            treemap of generation mix for each time period as an HTML
+            file.
+
+            """
+            for tp, mix in gen_mix.items():
+                filtered_mix = {
+                    k: v for k, v in mix.items() if v > 0 and k in GENERATION_TYPES
+                }
+                if not filtered_mix:
+                    continue
+
+                total = sum(filtered_mix.values())
+                sorted_items = sorted(filtered_mix.items(), key=lambda x: -x[1])
+                sizes = [v for k, v in sorted_items]
+                pcts = [v / total * 100 for k, v in sorted_items]
+                labels = []
+                colors = []
+                customdata = []
+
+                for (k, v), pct in zip(sorted_items, pcts):
+                    label = f"{GENERATION_TYPES[k].label}<br>{int(v)} MW<br>{pct:.1f}%"
+                    labels.append(label if pct >= small_pct_threshold else "")
+                    colors.append(GENERATION_TYPES[k].color)
+                    customdata.append(
+                        f"{GENERATION_TYPES[k].label} ({int(v)} MW, {pct:.1f}%)"
+                    )
+
+                # Plotly treemap
+                fig = go.Figure(
+                    go.Treemap(
+                        labels=[GENERATION_TYPES[k].label for k, v in sorted_items],
+                        parents=[""] * len(sorted_items),
+                        values=sizes,
+                        marker=dict(colors=colors),
+                        textinfo="label+value+percent entry",
+                        hovertext=customdata,
+                        hoverinfo="text",
+                    )
+                )
+
+                fig.update_layout(
+                    title=f"Generation Mix Treemap - {tp}",
+                    width=900,
+                    height=600,
+                    margin=dict(t=50, l=25, r=25, b=25),
+                )
+
+                # Save as an interactive HTML
+                plot_path = (
+                    f"{results_path}/plots/{case_json}_treemap_{tp}_interactive.html"
+                )
+                fig.write_html(f"{plot_path}")
+                print(f" -> Saved interactive treemap for {tp} to {plot_path}")
+
+        def plotly_pie_gen_mix(gen_mix, GENERATION_TYPES, results_path, case_json):
+            """This method creates and saves an interactive Plotly pie
+            chart of generation mix for each time period as an HTML
+            file.
+
+            """
+            for tp, mix in gen_mix.items():
+                filtered_mix = {
+                    k: v for k, v in mix.items() if v > 0 and k in GENERATION_TYPES
+                }
+                if not filtered_mix:
+                    continue
+
+                sizes = [filtered_mix[k] for k in filtered_mix]
+                total = sum(sizes)
+                labels = [
+                    f"{GENERATION_TYPES[k].label} ({int(filtered_mix[k])} MW, {filtered_mix[k]/total*100:.1f}%)"
+                    for k in filtered_mix
+                ]
+                colors = [GENERATION_TYPES[k].color for k in filtered_mix]
+
+                # Plotly pie chart
+                fig = go.Figure(
+                    go.Pie(
+                        labels=[GENERATION_TYPES[k].label for k in filtered_mix],
+                        values=sizes,
+                        marker=dict(colors=colors, line=dict(color="white", width=1)),
+                        textinfo="label+percent",
+                        hoverinfo="label+value+percent",
+                        pull=[0.05]
+                        * len(sizes),  # Slightly "explode" all slices for separation
+                        hole=0,  # 0 for pie, >0 for donut
+                    )
+                )
+
+                fig.update_layout(
+                    title=f"Generation Mix Pie Chart - {tp}",
+                    width=700,
+                    height=700,
+                    margin=dict(t=50, l=25, r=25, b=25),
+                    showlegend=True,
+                )
+
+                # Save as an interactive HTML
+                plot_path = (
+                    f"{results_path}/plots/{case_json}_pie_leader_{tp}_interactive.html"
+                )
+                fig.write_html(f"{plot_path}")
+                print(f" -> Saved interactive pie chart for {tp} to {plot_path}")
+
+        # Create gen_mix dictionary and arrays needed for the plots
+        if case_json == "combined":
+            gen_mix_ren, gen_mix_arrays_ren, time_periods_ren = get_gen_arrays(
+                "renewables", results_path, data_path, GENERATION_TYPES
+            )
+            gen_mix_disp, gen_mix_arrays_disp, time_periods_disp = get_gen_arrays(
+                "dispatchables", results_path, data_path, GENERATION_TYPES
+            )
+
+            # Check that time_periods are the same
+            if time_periods_ren != time_periods_disp:
+                raise ValueError(
+                    "Time periods for renewables and dispatchables do not match!"
+                )
+            time_periods = time_periods_ren  # or use time_periods_disp too
+
+            # Get the union of all time periods and all types
+            all_time_periods = sorted(
+                set(gen_mix_ren.keys()) | set(gen_mix_disp.keys())
+            )
+            all_types = sorted(
+                set(
+                    t
+                    for mix in [gen_mix_ren, gen_mix_disp]
+                    for v in mix.values()
+                    for t in v
+                )
+            )
+
+            # Merge gen_mix
+            gen_mix = {}
+            for tp in all_time_periods:
+                gen_mix[tp] = {}
+                for gt in all_types:
+                    val_ren = gen_mix_ren.get(tp, {}).get(gt, 0.0)
+                    val_disp = gen_mix_disp.get(tp, {}).get(gt, 0.0)
+                    gen_mix[tp][gt] = val_ren + val_disp
+
+            # Merge gen_mix_arrays
+            gen_mix_arrays = {
+                gt: np.array([gen_mix[tp].get(gt, 0.0) for tp in all_time_periods])
+                for gt in all_types
+            }
 
         else:
-            self._plot_workhorse_relational(
-                level_key,
-                df,
-                keys,
-                vars,
-                parent_key_string,
-                pretty_title,
-                plot_bounds,
-                save_dir,
+            gen_mix, gen_mix_arrays, time_periods = get_gen_arrays(
+                case_json, results_path, data_path, GENERATION_TYPES
             )
 
-    def _expressions_plot_workhorse(
-        self,
-        level_key,
-        upper_level_dict,
-        parent_key_string,
-        save_dir="./",
-        plot_bounds=False,
-    ):
-        # go through a commitment period and parse out the dispatch periods
-        # slice out all keys pertaining to dispatchPeriod
-        level_period_keys = [
-            this_key for this_key in upper_level_dict.keys() if (level_key in this_key)
+        if plot_type == "stackplot":
+            plotly_stackplot_gen_mix(
+                time_periods, gen_mix_arrays, GENERATION_TYPES, results_path, case_json
+            )
+        elif plot_type == "treemap":
+            plotly_treemap_gen_mix(gen_mix, GENERATION_TYPES, results_path, case_json)
+        elif plot_type == "piechart":
+            plotly_pie_gen_mix(gen_mix, GENERATION_TYPES, results_path, case_json)
+        elif plot_type == "all":
+            plotly_stackplot_gen_mix(
+                time_periods, gen_mix_arrays, GENERATION_TYPES, results_path, case_json
+            )
+            plotly_treemap_gen_mix(gen_mix, GENERATION_TYPES, results_path, case_json)
+            plotly_pie_gen_mix(gen_mix, GENERATION_TYPES, results_path, case_json)
+        else:
+            raise ValueError(
+                f"Plot type '{plot_type}' is not supported. Please choose between 'stackplot', 'treemap', or 'piechart'."
+            )
+
+    def create_stackgraph_and_metrics(self, results_path, rep_days, day_hour_list):
+
+        try:
+            import ujson as json
+        except ImportError:
+            import json
+
+        with open(f"{results_path}/generation.json", "r") as F:
+            gen_data = json.load(F)
+
+        with open(f"{results_path}/loads.json", "r") as f:
+            loads_data = json.load(f)
+
+        with open(f"{results_path}/load_shed.json", "r") as f:
+            load_shed_data = json.load(f)
+
+        with open(f"{results_path}/reserves.json", "r") as f:
+            reserves_data = json.load(f)
+
+        with open(f"{results_path}/charging.json", "r") as f:
+            charging_data = json.load(f)
+
+        with open(f"{results_path}/discharging.json", "r") as f:
+            discharging_data = json.load(f)
+
+        # Note that these are the same colors used in the stack plots
+        # and pie charts above
+        def darken_color(hex_color, percent=0.2):
+            """Darken a hex color by a given percent (0.2 = 20%)"""
+            hex_color = hex_color.lstrip("#")
+            rgb = [int(hex_color[i : i + 2], 16) for i in (0, 2, 4)]
+            darker_rgb = [max(0, int(c * (1 - percent))) for c in rgb]
+            return "#" + "".join(f"{c:02x}" for c in darker_rgb)
+
+        tab20 = plt.get_cmap("tab20")
+        GEN_TYPES = {
+            "nuclear": mcolors.to_hex(tab20(2)),
+            "coal": mcolors.to_hex(tab20(5)),
+            "cc_gas": mcolors.to_hex(tab20(1)),
+            "ct_gas": mcolors.to_hex(tab20(3)),
+            "thermal_other": mcolors.to_hex(tab20(13)),
+            "steam": mcolors.to_hex(tab20(14)),
+            "solar": mcolors.to_hex(tab20(9)),
+            "wind": mcolors.to_hex(tab20(11)),
+            "hydro": mcolors.to_hex(tab20(19)),
+            "battery_discharge": mcolors.to_hex(tab20(15)),
+            "battery_charge": mcolors.to_hex(tab20(15)),
+            "ES4": mcolors.to_hex(tab20(17)),
+            "ps": mcolors.to_hex(tab20(19)),
+            "dr": mcolors.to_hex(tab20(18)),
+            # Candidates: 20% darker than original
+            "gas_cc-c": darken_color(mcolors.to_hex(tab20(1))),
+            "gas_ct-c": darken_color(mcolors.to_hex(tab20(3))),
+            "pv-c": darken_color(mcolors.to_hex(tab20(9))),
+            "wind-c": darken_color(mcolors.to_hex(tab20(11))),
+            "hydro-c": darken_color(mcolors.to_hex(tab20(19))),
+            "battery-c": darken_color(mcolors.to_hex(tab20(15))),
+            "ES4-c": darken_color(mcolors.to_hex(tab20(17))),
+            "ps-c": darken_color(mcolors.to_hex(tab20(19))),
+        }
+        GEN_TYPE_HATCHES = {
+            # No hatch pattern for "original" types
+            "nuclear": "",
+            "coal": "",
+            "cc_gas": "",
+            "ct_gas": "",
+            "thermal_other": "",
+            "steam": "",
+            "solar": "",
+            "wind": "",
+            "hydro": "",
+            "battery_discharge": "",
+            "battery_charge": "",
+            "ES4": "",
+            "dr": "",
+            # Candidates get a hatch pattern
+            "gas_cc-c": "////",
+            "gas_ct-c": "////",
+            "steam-c": "////",
+            "pv-c": "////",
+            "wind-c": "////",
+            "hydro-c": "////",
+            "battery-c": "////",
+            "ES4-c": "////",
+        }
+        GEN_TYPE_ALIASES = {
+            "nuclear": "Nuclear",
+            "coal": "Coal",
+            "cc_gas": "CC",
+            "ct_gas": "CT",
+            "thermal_other": "Thermal",
+            "steam": "Steam",
+            "solar": "Solar",
+            "wind": "Wind",
+            "hydro": "Hydro",
+            "battery_charge": "Battery Charging",
+            "battery_discharge": "Battery Discharging",
+            "ES4": "ES4",
+            "dr": "DR",
+            "steam-c": "Steam (Candidate)",
+            "gas_cc-c": "CC (Candidate)",
+            "gas_ct-c": "CT (Candidate)",
+            "pv-c": "Solar (Candidate)",
+            "wind-c": "Wind (Candidate)",
+            "hydro-c": "Hydro (Candidate)",
+            "ES4-c": "ES4 (Candidate)",
+        }
+
+        generation = {}
+        for g, val in gen_data.items():
+            c = list(pyo.ComponentUID(g)._cids)
+            _, (stage,) = c.pop(0)
+            if stage not in generation:
+                generation[stage] = {}
+            stage_dict = generation[stage]
+
+            _, (period,) = c.pop(0)
+            if period not in stage_dict:
+                stage_dict[period] = {}
+            period_dict = stage_dict[period]
+
+            _, (commitment,) = c.pop(0)
+            if commitment not in period_dict:
+                period_dict[commitment] = {}
+            commitment_dict = period_dict[commitment]
+
+            _, (dispatch,) = c.pop(0)
+            if dispatch not in commitment_dict:
+                commitment_dict[dispatch] = dict.fromkeys(GEN_TYPES, 0)
+            dispatch_dict = commitment_dict[dispatch]
+
+            gen_name = c[-1][0]
+            _type = None
+            for gt in GEN_TYPES:
+                if gen_name.endswith(gt):
+                    _type = gt
+                    break
+            if _type is None:
+                raise RuntimeError(f"Cannot map generator name '{gen_name}' to type")
+            dispatch_dict[_type] += val
+
+        # Add battery charging data to generation structure
+        for g, val in charging_data.items():
+            c = list(pyo.ComponentUID(g)._cids)
+            _, (stage,) = c.pop(0)
+            if stage not in generation:
+                generation[stage] = {}
+            stage_dict = generation[stage]
+
+            _, (period,) = c.pop(0)
+            if period not in stage_dict:
+                stage_dict[period] = {}
+            period_dict = stage_dict[period]
+
+            _, (commitment,) = c.pop(0)
+            if commitment not in period_dict:
+                period_dict[commitment] = {}
+            commitment_dict = period_dict[commitment]
+
+            _, (dispatch,) = c.pop(0)
+            if dispatch not in commitment_dict:
+                commitment_dict[dispatch] = dict.fromkeys(GEN_TYPES, 0)
+            dispatch_dict = commitment_dict[dispatch]
+
+            dispatch_dict["battery_charge"] -= val
+
+        # Add battery discharging data to generation structure
+        # Per request, plot discharge as negative (below x-axis)
+        for g, val in discharging_data.items():
+            c = list(pyo.ComponentUID(g)._cids)
+            _, (stage,) = c.pop(0)
+            if stage not in generation:
+                generation[stage] = {}
+            stage_dict = generation[stage]
+
+            _, (period,) = c.pop(0)
+            if period not in stage_dict:
+                stage_dict[period] = {}
+            period_dict = stage_dict[period]
+
+            _, (commitment,) = c.pop(0)
+            if commitment not in period_dict:
+                period_dict[commitment] = {}
+            commitment_dict = period_dict[commitment]
+
+            _, (dispatch,) = c.pop(0)
+            if dispatch not in commitment_dict:
+                commitment_dict[dispatch] = dict.fromkeys(GEN_TYPES, 0)
+            dispatch_dict = commitment_dict[dispatch]
+
+            dispatch_dict["battery_discharge"] += val
+
+        # print("\n[DEBUG] Storage summary from JSON inputs")
+
+        total_charging = sum(charging_data.values())
+        total_discharging = sum(discharging_data.values())
+
+        # print(f"[DEBUG] Total charging (raw): {total_charging:,.3f}")
+        # print(f"[DEBUG] Total discharging (raw): {total_discharging:,.3f}")
+
+        charging_by_suffix = defaultdict(float)
+        for g, val in charging_data.items():
+            name = g.split(".")[-1]
+            if name.endswith("_battery"):
+                charging_by_suffix["battery"] += val
+            elif name.endswith("_ps"):
+                charging_by_suffix["ps"] += val
+            else:
+                charging_by_suffix["other"] += val
+
+        discharging_by_suffix = defaultdict(float)
+        for g, val in discharging_data.items():
+            name = g.split(".")[-1]
+            if name.endswith("_battery"):
+                discharging_by_suffix["battery"] += val
+            elif name.endswith("_ps"):
+                discharging_by_suffix["ps"] += val
+            else:
+                discharging_by_suffix["other"] += val
+
+        # print("[DEBUG] Charging by storage type suffix:")
+        # for k, v in charging_by_suffix.items():
+        #     print(f"    {k}: {v:,.3f}")
+
+        # print("[DEBUG] Discharging by storage type suffix:")
+        # for k, v in discharging_by_suffix.items():
+        #     print(f"    {k}: {v:,.3f}")
+
+        time_periods = [
+            (s, p, c, d)
+            for s in generation
+            for p in generation[s]
+            for c in generation[s][p]
+            for d in generation[s][p][c]
         ]
-
-        # scan level period for keys that have values associated
-        keys_of_vals_of_interest = []
-        for this_key in upper_level_dict[level_period_keys[0]]:
-            if "value" in upper_level_dict[level_period_keys[0]][this_key]:
-                keys_of_vals_of_interest.append(this_key)
-
-        print(keys_of_vals_of_interest)
-
-        # if we found things that have values, make a dictionary and then plot
-        # why do we need to do it by level first and then pivot the dict? Because we don't actually know what the "periods" numbers are, they might be arbitrary and in an arbitrary order
-        if len(keys_of_vals_of_interest) > 0:
-            # check all the periods and sort them out
-            vals_dict = {}
-
-            for this_key in upper_level_dict:
-                level_period_number = int(
-                    re.split(r"\[|\]", this_key.split(level_key)[1])[1]
-                )
-                vals_dict.setdefault(level_period_number, {})
-                for this_val_key in keys_of_vals_of_interest:
-                    vals_dict[level_period_number][this_val_key] = upper_level_dict[
-                        this_key
-                    ][this_val_key]["value"]
-
-            print(vals_dict)
-
-            # now pivot the dictionary to make a dataframe
-            # make a dictionary where the keys are the top layer
-            df_dict = {key: [] for key in keys_of_vals_of_interest}
-            sorted_vals_period = sorted(vals_dict)
-            df_dict["period_number"] = sorted_vals_period
-            for this_val_period in sorted_vals_period:
-                for this_key in keys_of_vals_of_interest:
-                    df_dict[this_key].append(vals_dict[this_val_period][this_key])
-
-            print(df_dict)
-            expression_level_df = pd.DataFrame(df_dict)
-            print(expression_level_df)
-
-            # plot the DF
-            # figure out how big the plot needs to be
-            gridspec_height = 2 * len(keys_of_vals_of_interest)
-            gridspec_width = 2
-            fig_width_padding = 0
-            fig_height_padding = 0
-            max_figheight = 48
-            total_periods = len(expression_level_df)
-            key_gridspec_div = floor(
-                gridspec_height / len(keys_of_vals_of_interest)
-            )  # number of gridspec heights a key plot can be
-
-            # to make things look nice, we dont want height or width to be more than twice the other
-            fig_width = (total_periods * gridspec_width * 4) + fig_width_padding
-            fig_width = min(max_figheight, fig_width)
-            fig_height = (2 * gridspec_height) + fig_height_padding
-            if fig_width / fig_height > 2:
-                fig_height = floor(fig_width / 2)
-            elif fig_height / fig_width > 2:
-                fig_width = floor(fig_height / 2)
-
-            # set up plot
-            fig = plt.figure(
-                figsize=(fig_width, fig_height), tight_layout=False
-            )  # (32, 16) works will for 4 plots tall and about 6 periods wide per plot
-            gs = fig.add_gridspec(gridspec_height, gridspec_width)
-            # plot out the keys of interest
-
-            pretty_title = "Expression"
-
-            ax_koi_list = []
-            for ix_koi, this_koi in enumerate(keys_of_vals_of_interest):
-                ax_koi = fig.add_subplot(
-                    gs[
-                        (ix_koi * key_gridspec_div) : ((ix_koi + 1) * key_gridspec_div),
-                        :,
-                    ]
-                )
-                ax_koi_list.append(ax_koi)
-
-                ax_koi.plot(
-                    expression_level_df["period_number"],
-                    expression_level_df[this_koi],
-                    label=f"{this_koi}",
-                    marker="o",
-                )
-                ax_koi.set_ylabel("Value $[n]$")
-                ax_koi.xaxis.set_major_locator(MaxNLocator(integer=True))
-                ax_koi.legend()
-
-            # label axes
-            ax_koi_list[-1].set_xlabel(f"{level_key} $[n]$")
-            ax_koi_list[0].set_title(f"{pretty_title} by Type")
-
-            # JSC update - " ", "_" to ' ', '_' for compilation. Not sure if this is due to a version diff or what
-            fig.align_labels()
-            fig.suptitle(f"{parent_key_string}")
-            fig.savefig(
-                f"{save_dir}{parent_key_string}_{pretty_title.replace(' ', '_')}.png"
-            )
-            plt.close()
-
-    def _level_plot_workhorse(
-        self,
-        level_key,
-        upper_level_dict,
-        parent_key_string,
-        save_dir="./",
-        plot_bounds=False,
-    ):
-        # go through a commitment period and parse out the dispatch periods
-        level_timeseries = []
-        # slice out all keys pertaining to dispatchPeriod
-        level_period_keys = [
-            this_key for this_key in upper_level_dict.keys() if (level_key in this_key)
-        ]
-        # aux_var_dict = {}
-        for this_key in level_period_keys:
-            level_period_dict = {}
-            # cut out which dispatch period this is
-            level_period_number = int(
-                re.split(r"\[|\]", this_key.split(level_key)[1])[1]
-            )
-            # print(level_period_number)
-
-            level_period_dict["period_number"] = level_period_number
-
-            # pivot the dictionary to get the primals into categories
-            primals_by_category = {}
-            primals_by_name = {}
-
-            # split key on brackets to get title
-            for this_primal in upper_level_dict[this_key]:
-                # check if it has a bracketed relationship, and if it does go ahead, otherwise skip
-                tmp_save_primal = upper_level_dict[this_key][this_primal]
-                try:
-
-                    # check if this_primal is splitable on brackets
-
-                    # based on the name of the primal, split out the "category" and the "name"
-                    # Example: commitmentPeriod[1]
-                    # - category: "commitmentPeriod"
-                    # -     name: "1"
-                    primal_category = this_primal.split("[")[0]
-                    primal_name = this_primal.split("[")[1].split("]")[0]
-
-                    # create one view that shares the categories, and one the shares the names
-                    primals_by_category.setdefault(primal_category, {})
-                    primals_by_name.setdefault(primal_name, {})
-
-                    primals_by_category[primal_category][primal_name] = tmp_save_primal
-                    primals_by_name[primal_name][primal_category] = tmp_save_primal
-
-                except IndexError as iEx:
-                    print(
-                        f"[WARNING] _level_plot_workhorse has encountered an error: Attempted to split out {this_primal} from {this_key}, failed with error {iEx}. Skipping."
-                    )
-                    # aux_var_dict.setdefault(this_primal, [])
-                    # aux_var_dict[this_primal].append(this_key)
-            level_period_dict["primals_by_category"] = primals_by_category
-            level_period_dict["primals_by_name"] = primals_by_name
-            level_timeseries.append(level_period_dict)
-
-        # # clean up the aux vars based on what we found
-        # for aux_var_primal_name, aux_var_category_name in aux_var_dict.items():
-        #     print(aux_var_primal_name, aux_var_category_name)
-
-        # sort by the dispatch period number
-        level_timeseries = sorted(level_timeseries, key=lambda x: x["period_number"])
-
-        # discover the relationships at the dispatch level
-        # ASSUMES that all the dispatch levels have the exact same underlying variables and relationships
-        level_relationships = self.discover_level_relationships(
-            upper_level_dict[level_period_keys[0]]
-        )
-        # print("LEVEL RELATIONSHIPS DEBUG")
-        # print(level_relationships)
-        # print("END LEVEL RELATIONSHIPS DEBUG")
-
-        # plot relationships
-        for vars_of_interest, keys_of_interest in level_relationships.items():
-
-            # sort the vars and keys for consistency
-            tmp_voi = sorted(vars_of_interest)
-            tmp_koi = sorted(keys_of_interest)
-
-            # make a df for debug and also easy tabularness for plots
-            (
-                this_df_of_interest,
-                this_df_units,
-            ) = self._level_relationship_dict_to_df_workhorse(
-                level_key, level_timeseries, tmp_koi, tmp_voi
-            )
-
-            # check if we got anything in the df
-            if not this_df_of_interest.empty:
-
-                # just ram the variable names together, that'll be fine, right?
-                this_pretty_title = ", ".join(tmp_voi)
-
-                # [HACK]
-                # if we find powerflow, plot it as a network
-                if "powerFlow" in tmp_voi:
-                    self._plot_graph_workhorse(
-                        this_df_of_interest,
-                        "powerFlow",
-                        parent_key_string,
-                        units=this_df_units,
-                        pretty_title=this_pretty_title,
-                        save_dir=save_dir,
-                    )
-
-                    # [HACK] put this back one indent level when done
-                    ## tab this back and forth to do the things
-
-                    # plot it
-                self._level_relationship_df_to_plot(
-                    level_key,
-                    this_df_of_interest,
-                    tmp_koi,
-                    tmp_voi,
-                    parent_key_string,
-                    pretty_title=this_pretty_title,
-                    save_dir=save_dir,
-                    plot_bounds=plot_bounds,
-                )
-
-    # JSC update - 'dc_branch' to 'branch'
-    def _plot_graph_workhorse(
-        self,
-        df,
-        value_key,
-        parent_key_string,
-        what_is_a_bus_called="branch",  #'dc_branch',
-        units=None,
-        pretty_title="Selected Data",
-        save_dir=".",
-    ):
-        # testing networkx plots
-
-        # preslice out data of interest
-        cols_of_interest = [col for col in df.columns if f"{value_key}_value" in col]
-        df_of_interest = df[cols_of_interest]
-        df_max = df_of_interest.to_numpy().max()
-        df_min = df_of_interest.to_numpy().min()
-        # assume all the units are the same, and pull the first one
-        units_str = ""
-        if units[cols_of_interest[0]] is not None:
-            units_str = f" [{units[cols_of_interest[0]]}]"
-
-        # construct graph object
-        G = nx.Graph()
-        labels = {}
-        # add nodes
-        for item in self.data.data["elements"]["bus"]:
-            G.add_node(item)
-            labels[item] = item
-
-        # do edges manually later
-
-        # set up plot
-        fig = plt.figure(
-            figsize=(16, 8), tight_layout=False
-        )  # (32, 16) works will for 4 plots tall and about 6 periods wide per plot
-        ax_graph = fig.add_subplot()
-        ax_graph.grid(False)
-
-        # # add edges
-        # for item in self.data.data['elements']['branch']:
-        #     G.add_edge(self.data.data['elements']['branch'][item]['from_bus'], self.data.data['elements']['branch'][item]['to_bus'])
-
-        # G = nx.path_graph(5)
-        graph_node_position_dict = nx.kamada_kawai_layout(G)
-        # graph_node_position_dict = nx.planar_layout(G)
-        # graph_node_position_dict = nx.spectral_layout(G)
-        nx.drawing.draw_networkx_nodes(
-            G, graph_node_position_dict, node_size=1000, ax=ax_graph
-        )
-        nx.draw_networkx_labels(
-            G,
-            graph_node_position_dict,
-            labels,
-            font_size=18,
-            font_color="whitesmoke",
-            ax=ax_graph,
-        )
-
-        def draw_single_edge_flow(
-            item,
-            glyph_values_slice,
-            ax_graph,
-            cmap=cm.rainbow,
-            norm=Normalize(vmin=None, vmax=None),
-            glyph_type="custom",
-        ):
-            def generate_flow_glyphs(
-                num_glyphs,
-                spacing=0.05,
-                glyph_type="triangle",
-                glyph_rotation=0.0,
-                verts=3,
-            ):
-
-                flow_glyphs = []
-                for this_block_ix in range(num_glyphs):
-                    # normalizing this patch to 1
-
-                    ####
-                    # rectangle version
-                    ####
-                    if glyph_type == "rectangle":
-                        # anchor for rectangles are set to bottom left
-                        glyph_anchor_coord = [this_block_ix / float(num_glyphs), -0.5]
-                        # height is y, width is x
-                        consistent_width = 1.0 / float(num_glyphs)
-                        # apply scaling
-                        x_nudge = consistent_width * (spacing)
-                        # nudge the start forward a bit (by the nudge factor)
-                        glyph_anchor_coord[0] += x_nudge
-                        patch_width = consistent_width - x_nudge
-                        patch_height = 1
-                        flow_glyphs.append(
-                            Rectangle(glyph_anchor_coord, patch_width, patch_height)
-                        )
-
-                    ####
-                    # triangle version
-                    ####
-                    if glyph_type == "triangle":
-                        # triangles need to be in the center and then given a size
-                        glyph_anchor_coord = [
-                            (this_block_ix + 0.5) / float(num_glyphs),
-                            0,
-                        ]
-                        glyph_verts = 3
-                        glyph_radius = (1.0 / float(num_glyphs)) / 2.0
-                        # apply nudges
-                        glyph_radius *= 1 - (spacing / 2.0)
-                        flow_glyphs.append(
-                            RegularPolygon(
-                                glyph_anchor_coord,
-                                glyph_verts,
-                                radius=glyph_radius,
-                                orientation=glyph_rotation,
-                            )
-                        )
-
-                        yscale_transform = Affine2D().scale(sx=1, sy=0.5 / glyph_radius)
-                        # rescale y to make it fit in a 1x1 box
-                        flow_glyphs[-1].set_transform(yscale_transform)
-
-                    ####
-                    # n-gon version
-                    ####
-                    if glyph_type == "n-gon":
-                        # triangles need to be in the center and then given a size
-                        glyph_anchor_coord = [
-                            (this_block_ix + 0.5) / float(num_glyphs),
-                            0,
-                        ]
-                        glyph_verts = verts
-                        glyph_radius = (1.0 / float(num_glyphs)) / 2.0
-                        # apply nudges
-                        glyph_radius *= 1 - (spacing)
-                        flow_glyphs.append(
-                            RegularPolygon(
-                                glyph_anchor_coord,
-                                glyph_verts,
-                                radius=glyph_radius,
-                                orientation=glyph_rotation,
-                            )
-                        )
-
-                        yscale_transform = Affine2D().scale(sx=1, sy=0.5 / glyph_radius)
-                        # rescale y to make it fit in a 1x1 box
-                        flow_glyphs[-1].set_transform(yscale_transform)
-
-                    ####
-                    # custom_flow
-                    ####
-                    if glyph_type == "custom":
-                        # anchor for rectangles are set to bottom left
-                        glyph_anchor_coord = [this_block_ix / float(num_glyphs), -0.5]
-                        # height is y, width is x
-                        consistent_width = 1.0 / float(num_glyphs)
-                        # apply scaling
-                        x_nudge = consistent_width * (spacing)
-                        patch_width = consistent_width - x_nudge
-                        patch_height = 1
-                        codes, verts = zip(
-                            *[
-                                (mpath.Path.MOVETO, glyph_anchor_coord),
-                                (
-                                    mpath.Path.LINETO,
-                                    [
-                                        glyph_anchor_coord[0],
-                                        glyph_anchor_coord[1] + patch_height,
-                                    ],
-                                ),
-                                (
-                                    mpath.Path.LINETO,
-                                    [
-                                        glyph_anchor_coord[0] + patch_width * 0.7,
-                                        glyph_anchor_coord[1] + patch_height,
-                                    ],
-                                ),  # go 70% of the width along the top
-                                (
-                                    mpath.Path.LINETO,
-                                    [
-                                        glyph_anchor_coord[0] + patch_width,
-                                        glyph_anchor_coord[1] + patch_height * 0.5,
-                                    ],
-                                ),  # go the rest of the width and meet in the center
-                                (
-                                    mpath.Path.LINETO,
-                                    [
-                                        glyph_anchor_coord[0] + patch_width * 0.7,
-                                        glyph_anchor_coord[1],
-                                    ],
-                                ),  # go back a bit and to the bottom to finish the wedge
-                                (mpath.Path.LINETO, glyph_anchor_coord),
-                            ]
-                        )  # go to home
-
-                        flow_glyphs.append(
-                            PathPatch(mpath.Path(verts, codes), ec="none")
-                        )
-
-                        rotation_transform = Affine2D().rotate_around(
-                            glyph_anchor_coord[0] + patch_width * 0.5,
-                            glyph_anchor_coord[1] + patch_height * 0.5,
-                            glyph_rotation,
-                        )
-                        # rescale y to make it fit in a 1x1 box
-                        flow_glyphs[-1].set_transform(rotation_transform)
-
-                return flow_glyphs
-
-            # make some blocks
-            # weights_top = (np.random.randn(4)+1)/2.
-            # weights_bot = (np.random.randn(4)+1)/2.
-            # weights_top = np.array(range(num_blocks))/(num_blocks*2)
-            # weights_bot = (np.array(range(num_blocks))+num_blocks)/(num_blocks*2)
-            weights_top = glyph_values_slice
-            weights_bot = glyph_values_slice
-
-            top_flow_glyphs = generate_flow_glyphs(
-                len(weights_top), glyph_type=glyph_type
-            )
-            top_facecolors = cmap(norm(weights_top))
-            top_flow_collection = PatchCollection(
-                top_flow_glyphs, facecolors=top_facecolors, edgecolors="grey", alpha=0.5
-            )
-            # bot_flow_glyphs = generate_flow_glyphs(len(weights_bot), glyph_type=glyph_type, glyph_rotation=(np.pi/2.)) # for squares
-            bot_flow_glyphs = generate_flow_glyphs(
-                len(weights_bot), glyph_type=glyph_type, glyph_rotation=(np.pi)
-            )  # for custom
-            bot_flow_glyphs = reversed(bot_flow_glyphs)
-            bot_facecolors = cmap(norm(weights_bot))
-            # bot_flow_collection = PatchCollection(bot_flow_glyphs, facecolors=bot_facecolors, edgecolors='grey', alpha=0.5) # [HACK]
-
-            # scale and move top and bottom collections
-            # top_base_transform = Affine2D().scale(sx=1, sy=0.9) + Affine2D().translate(0, 0.5) #+ ax_graph.transData  # [HACK]
-            top_base_transform = Affine2D().scale(sx=1, sy=1.0) + Affine2D().translate(
-                0, 0.0
-            )  # + ax_graph.transData
-            top_flow_collection.set_transform(top_base_transform)
-            bot_base_transform = Affine2D().scale(sx=1, sy=0.9) + Affine2D().translate(
-                0, -0.5
-            )  # + ax_graph.transData
-            # bot_base_transform = Affine2D().scale(sx=1, sy=0.9) + Affine2D().translate(0, -0.5) + ax_graph.transData
-            # bot_flow_collection.set_transform(bot_base_transform) # [HACK]
-
-            # combine collections and move to edge between nodes
-
-            # attempt to rotate
-            start_key = self.data.data["elements"][what_is_a_bus_called][item][
-                "from_bus"
-            ]
-            end_key = self.data.data["elements"][what_is_a_bus_called][item]["to_bus"]
-            start_pos = graph_node_position_dict[start_key]
-            end_pos = graph_node_position_dict[end_key]
-            node_distance = np.linalg.norm(end_pos - start_pos)
-            rot_angle_rad = np.arctan2(
-                (end_pos[1] - start_pos[1]), (end_pos[0] - start_pos[0])
-            )
-
-            along_edge_scale = 0.4
-            away_from_edge_scale = 0.1
-            # set up transformations
-            # stretch to the distance between target nodes
-            length_transform = Affine2D().scale(
-                sx=node_distance * along_edge_scale, sy=1
-            )
-            # squish
-            scale_transform = Affine2D().scale(sx=1, sy=away_from_edge_scale)
-            # rotate
-            rot_transform = Affine2D().rotate_deg(np.rad2deg(rot_angle_rad))
-            # translate to the node start, then push it along the edge until it's apprximately centered and scaled nicely
-            translate_transform = Affine2D().translate(
-                start_pos[0]
-                + (
-                    np.cos(rot_angle_rad) * node_distance * 0.5 * (1 - along_edge_scale)
-                ),
-                start_pos[1]
-                + (
-                    np.sin(rot_angle_rad) * node_distance * 0.5 * (1 - along_edge_scale)
-                ),
-            )
-            t2 = (
-                length_transform
-                + scale_transform
-                + rot_transform
-                + translate_transform
-                + ax_graph.transData
-            )
-
-            top_flow_collection.set_transform(top_flow_collection.get_transform() + t2)
-            # bot_flow_collection.set_transform(bot_flow_collection.get_transform() + t2) # [HACK]
-
-            # add collection
-            ax_graph.add_collection(top_flow_collection)
-            # ax_graph.add_collection(bot_flow_collection)  # [HACK]
-
-        # add edges
-        # define edge colorbar
-        cmap = cm.rainbow
-        normalize = Normalize(vmin=df_min, vmax=df_max)
-        cmappable = cm.ScalarMappable(norm=normalize, cmap=cmap)
-
-        for item in self.data.data["elements"][what_is_a_bus_called]:
-
-            # grab the keys we care about
-            start_key = self.data.data["elements"][what_is_a_bus_called][item][
-                "from_bus"
-            ]
-            end_key = self.data.data["elements"][what_is_a_bus_called][item]["to_bus"]
-            start_pos = graph_node_position_dict[start_key]
-            end_pos = graph_node_position_dict[end_key]
-            # edge_key = f"branch_{start_key}_{end_key}_{value_key}_value"
-            # alt_edge_key = f"branch_{end_key}_{start_key}_{value_key}_value"
-            edge_key = f"{item}_{value_key}_value"
-            alt_edge_key = f"{item}_{value_key}_value"
-
-            # @KyleSkolfield is there a reason to not do this?
-            branch_name_edge_key = item + "_powerFlow_value"
-
-            # kind = 'triangle'
-            # kind = 'rectangle'
-            kind = "custom"
-            glyph_values_slice = df[branch_name_edge_key].values
-
+        times = list(range(len(time_periods)))
+
+        loads = {}
+        for g, val in loads_data.items():
+            c = list(pyo.ComponentUID(g)._cids)
+            _, (stage,) = c.pop(0)
+            if stage not in loads:
+                loads[stage] = {}
+            stage_dict = loads[stage]
+            _, (period,) = c.pop(0)
+            if period not in stage_dict:
+                stage_dict[period] = {}
+            period_dict = stage_dict[period]
+            _, (commitment,) = c.pop(0)
+            if commitment not in period_dict:
+                period_dict[commitment] = 0
+            period_dict[commitment] += val  # Sum all buses for this time period
+
+        loads_trace = []
+        for s, p, c, d in time_periods:
             try:
-                glyph_values_slice = df[edge_key].values
-            except KeyError as kex:
-                print(f"Attempted to slice DF in network using {edge_key}, failed.")
+                total_load = loads[s][p][c]
+            except KeyError:
+                total_load = 0
+            loads_trace.append(total_load)
 
-            draw_single_edge_flow(
-                item,
-                glyph_values_slice,
-                ax_graph,
-                cmap=cmap,
-                norm=normalize,
-                glyph_type=kind,
+        # Build load_shed dict: sum all buses for each (stage, period, commitment)
+        load_shed = {}
+        for g, val in load_shed_data.items():
+            c = list(pyo.ComponentUID(g)._cids)
+            _, (stage,) = c.pop(0)
+            if stage not in load_shed:
+                load_shed[stage] = {}
+            stage_dict = load_shed[stage]
+            _, (period,) = c.pop(0)
+            if period not in stage_dict:
+                stage_dict[period] = {}
+            period_dict = stage_dict[period]
+            _, (commitment,) = c.pop(0)
+            if commitment not in period_dict:
+                period_dict[commitment] = 0
+            period_dict[commitment] += val  # Sum all buses for this time period
+
+        # Build load_shed_trace to match time_periods (repeat for each dispatch)
+        load_shed_trace = []
+        for s, p, c, d in time_periods:
+            try:
+                total_shed = load_shed[s][p][c]
+            except KeyError:
+                total_shed = 0
+            load_shed_trace.append(total_shed)
+        # print(load_shed_trace)
+
+        HATCH_TO_PATTERN = {
+            "": "",  # solid fill
+            "....": ".",  # dots
+            "////": "/",  # slashes
+            "xxxx": "x",  # crosshatch
+        }
+
+        def plotly_stackgraph(
+            times,
+            time_periods,
+            generation,
+            GEN_TYPES,
+            GEN_TYPE_ALIASES,
+            GEN_TYPE_HATCHES,
+            HATCH_TO_PATTERN,
+            results_path,
+        ):
+            """This function creates an interactive Plotly stackgraph
+            for given representative days.  Each bar represents one
+            hour in one representative day. The x-axis is labeled with
+            the representative day and hour (shown at hour 0 and 12).
+
+            """
+
+            n_hours_per_day = 24
+            n_rep_days = len(rep_days)
+            n_points = n_hours_per_day * n_rep_days
+
+            # Convert the rep_days strings to pandas Timestamps for
+            # formatting
+            rep_days_dt = [pd.to_datetime(d) for d in rep_days]
+
+            # Build x-axis labels and tick positions: For each hour
+            # in each representative day, create a label.  Only show
+            # the label for hour 0 and hour 12 of each day, leave
+            # others blank for clarity.
+            x_labels = []
+            tickvals = []
+            ticktext = []
+            for i, day in enumerate(rep_days_dt):
+                for h in range(n_hours_per_day):
+                    idx = i * n_hours_per_day + h  # Position in the x-axis
+                    if h == 0:
+                        label = day.strftime("%b-%d 00:00")
+                        x_labels.append(label)
+                        tickvals.append(idx)
+                        ticktext.append(label)
+                    elif h == 12:
+                        label = day.strftime("%b-%d 12:00")
+                        x_labels.append(label)
+                        tickvals.append(idx)
+                        ticktext.append(label)
+                    else:
+                        x_labels.append("")
+
+            # The x-axis for the bars is just integer positions (0 to n_points-1)
+            times = list(range(n_points))
+
+            # Prepare traces for each generator type
+            traces = []
+            for name, color in GEN_TYPES.items():
+                label = GEN_TYPE_ALIASES.get(name, name)
+                # One value per hour, for all representative days
+                values = np.array(
+                    [generation[s][p][c][d][name] for s, p, c, d in time_periods]
+                )
+                hatch = GEN_TYPE_HATCHES.get(name, "")
+                pattern_shape = HATCH_TO_PATTERN.get(hatch, "")
+                # Use lower opacity for candidate types (those with a
+                # hatch)
+                opacity = 0.7 if hatch else 1.0
+
+                traces.append(
+                    go.Bar(
+                        x=times,  # integer positions for each hour
+                        y=values,
+                        name=label,
+                        marker_color=color,
+                        marker_pattern_shape=pattern_shape,
+                        opacity=opacity,
+                        marker_line_width=0,  # remove white line
+                    )
+                )
+            # Add load shed as a stacked bar
+            tab20 = plt.get_cmap("tab20")
+            traces.append(
+                go.Bar(
+                    x=times,
+                    y=load_shed_trace,
+                    name="Load Shed",
+                    marker_color=mcolors.to_hex(tab20(7)),
+                    opacity=0.7,
+                    marker_line_width=0,
+                )
+            )
+            fig = go.Figure(data=traces)
+            fig.add_trace(
+                go.Scatter(
+                    x=times,
+                    y=loads_trace,
+                    mode="lines+markers",
+                    name="Total Load",
+                    line=dict(color="black", width=3, dash="dash"),
+                    marker=dict(size=4, color="black"),
+                    showlegend=True,
+                )
+            )
+            # fig.add_trace(
+            #     go.Scatter(
+            #         x=times,
+            #         y=load_shed_trace,
+            #         mode="lines+markers",
+            #         name="Load Shed",
+            #         line=dict(color="red", width=3, dash="dot"),
+            #         marker=dict(size=4, color="magenta"),
+            #         showlegend=True,
+            #     )
+            # )
+            fig.update_layout(
+                barmode="relative",
+                bargap=0,  # remove white spacing between bars
+                title="Generation Mix (Representative Days)",
+                xaxis=dict(
+                    # title="Hours",
+                    title="Representative Days (labeled every 12 hours)",
+                    tickvals=tickvals,  # show ticks at hour 0 and 12 of each rep day
+                    ticktext=ticktext,  # show corresponding label
+                    showgrid=True,
+                    gridcolor="gray",
+                    gridwidth=0.7,
+                    linecolor="black",
+                    mirror=True,
+                ),
+                yaxis=dict(
+                    title="Nameplate Capacity [MW]",
+                    showgrid=True,
+                    gridcolor="gray",
+                    gridwidth=0.7,
+                    linecolor="black",
+                    mirror=True,
+                ),
+                legend=dict(
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.02,
+                    font=dict(size=14),
+                    title="Generation Type",
+                ),
+                width=1200,
+                height=600,
+                plot_bgcolor="white",
+                paper_bgcolor="white",
             )
 
-            # forward arrow
-            ax_graph.arrow(
-                start_pos[0],
-                start_pos[1],
-                (end_pos[0] - start_pos[0]),
-                (end_pos[1] - start_pos[1]),
-                color="black",
+            # Add vertical lines to visually separate each
+            # representative day
+            for i in range(1, n_rep_days):
+                fig.add_vline(
+                    x=i * n_hours_per_day,
+                    line=dict(color="gray", width=1, dash="dot"),
+                    opacity=0.5,
+                )
+
+            # Add a little space above the tallest bar
+            all_series = {
+                name: np.array(
+                    [generation[s][p][c][d][name] for s, p, c, d in time_periods]
+                )
+                for name in GEN_TYPES
+            }
+
+            positive_stack = np.sum(
+                [np.clip(vals, 0, None) for vals in all_series.values()],
+                axis=0,
             )
-            # backward arrow
-            ax_graph.arrow(
-                end_pos[0],
-                end_pos[1],
-                (start_pos[0] - end_pos[0]),
-                (start_pos[1] - end_pos[1]),
-                color="black",
+            negative_stack = np.sum(
+                [np.clip(vals, None, 0) for vals in all_series.values()],
+                axis=0,
             )
 
-        # insert colorbar
-        fig.colorbar(cmappable, ax=ax_graph, label=f"{value_key}{units_str}")
-        # make some titles
-        fig.suptitle(f"{parent_key_string}_{value_key}")
+            ymin = negative_stack.min() if len(negative_stack) else 0
+            ymax = positive_stack.max() if len(positive_stack) else 0
 
-        # JSC update - " ", "_" to ' ', '_' for compilation. Not sure if this is due to a version diff or what
-        # save
-        fig.savefig(
-            f"{save_dir}{parent_key_string}_{pretty_title.replace(' ', '_')}_graph.png"
+            if loads_trace:
+                ymax = max(ymax, max(loads_trace))
+
+            lower = ymin * 1.25 if ymin < 0 else -1
+            upper = ymax * 1.25 if ymax > 0 else 1
+
+            fig.update_yaxes(
+                range=[lower, upper],
+                zeroline=True,
+                zerolinewidth=2,
+                zerolinecolor="black",
+            )
+
+            # Save as interactive HTML
+            plot_path = f"{results_path}/plots/stackgraph_generators_interactive.html"
+            fig.write_html(f"{plot_path}")
+            print(f" -> Saved interactive stackgraph to {plot_path}")
+
+            # print("\n[DEBUG] First 10 plotted values by type:")
+            # for name in ["battery_charge", "battery_discharge"]:
+            #     values = np.array(
+            #         [generation[s][p][c][d][name] for s, p, c, d in time_periods]
+            #     )
+            #     print(f"[DEBUG] {name}: {values[:10]}")
+
+        def plot_generation_pie_chart(
+            generation, time_periods, GEN_TYPES, GEN_TYPE_ALIASES, results_path
+        ):
+            """Plots a pie chart of total generation by unit type."""
+            # Sum total generation for each type
+            total_by_type = {name: 0.0 for name in GEN_TYPES}
+            for s, p, c, d in time_periods:
+                for name in GEN_TYPES:
+                    total_by_type[name] += generation[s][p][c][d][name]
+
+            # Filter out types with zero total
+            total_by_type = {k: v for k, v in total_by_type.items() if abs(v) > 1e-6}
+
+            labels = [
+                f"{GEN_TYPE_ALIASES.get(name, name)} ({total_by_type[name]:,.1f} MW)"
+                for name in total_by_type
+            ]
+            values = [total_by_type[name] for name in total_by_type]
+            colors = [GEN_TYPES[name] for name in total_by_type]
+
+            fig = go.Figure(
+                data=[go.Pie(labels=labels, values=values, marker=dict(colors=colors))]
+            )
+            fig.update_layout(
+                title="Total Generation Mix by Unit Type",
+                legend=dict(font=dict(size=14)),
+                width=700,
+                height=500,
+            )
+
+            # Save as HTML
+            plot_path = f"{results_path}/plots/generation_mix_pie_chart.html"
+            fig.write_html(plot_path)
+            print(f" -> Saved generation mix pie chart to {plot_path}")
+
+        def calculate_metrics(folder_name):
+            """
+            Reads the generation.json file and calculates the total generation by generator type.
+
+            :param folder_name: Directory containing the generation.json file.
+            :return: Dictionary with total generation by type.
+            """
+            messages = []
+            gen_types = [
+                "cc_gas",
+                "ct_gas",
+                "coal",
+                "nuclear",
+                "thermal_other",
+                "hydro",
+                "solar",
+                "wind",
+                "battery_discharge",
+                "steam",
+                "dr",
+                "ES4",
+                "battery_charge",
+                "hydro-c",
+                "gas_cc-c",
+                "gas_ct-c",
+                "battery-c",
+                "wind-c",
+                "pv-c",
+                "steam-c",
+                "ES4-c",
+            ]
+
+            def mw_to_gwh(total_mw, hours_per_period=1):
+                """
+                Converts total MW (sum over all periods) to GWh.
+                :param total_mw: Total MW (sum of MW for each period)
+                :param hours_per_period: Duration of each period in hours (default 1)
+                :return: Total GWh
+                """
+                total_mwh = total_mw * hours_per_period
+                total_gwh = total_mwh / 1000
+                return total_gwh
+
+            def add_generation_metrics():
+                """Add total generation and generation by generator
+                type.
+
+                Battery discharge is read from discharging.json and
+                added to total generation. Battery charging is read
+                from charging.json and reported separately, but it is
+                not subtracted from total generation.
+
+                """
+                total_gen_by_type = defaultdict(float)
+                file_path = os.path.join(folder_name, "generation.json")
+
+                if not os.path.exists(file_path):
+                    print(f"[WARNING] File not found: {file_path}")
+                    return
+
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+
+                for key, value in data.items():
+                    # The generator type is always at the end after
+                    # the last '.'
+                    gen_name = key.split(".")[-1]
+                    for gen_type in gen_types:
+                        if gen_name.endswith(gen_type):
+                            total_gen_by_type[gen_type] += value
+                            break
+
+                # Add battery discharging to total generation. Battery
+                # discharge is stored separately from generation in
+                # discharging.json.
+                total_battery_discharging = 0
+                discharging_file_path = os.path.join(folder_name, "discharging.json")
+
+                if os.path.exists(discharging_file_path):
+                    with open(discharging_file_path, "r") as f:
+                        discharging_data = json.load(f)
+
+                    total_battery_discharging = sum(
+                        value
+                        for key, value in discharging_data.items()
+                        if key.endswith("_battery") or key.endswith("_ps")
+                    )
+
+                    total_gen_by_type["battery_discharge"] += total_battery_discharging
+                else:
+                    print(f"[WARNING] File not found: {discharging_file_path}")
+
+                # Report battery charging separately. It is not included in
+                # total generation.
+                total_battery_charging = 0
+                charging_file_path = os.path.join(folder_name, "charging.json")
+                
+                if os.path.exists(charging_file_path):
+                    with open(charging_file_path, "r") as f:
+                        charging_data = json.load(f)
+
+                    total_battery_charging = sum(
+                        value
+                        for key, value in charging_data.items()
+                        if key.endswith("_battery") or key.endswith("_ps")
+                    )
+                else:
+                    print(f"[WARNING] File not found: {charging_file_path}")
+
+                # Total generation, including discharging (charging
+                # not included)
+                total_gen_all_types = sum(total_gen_by_type.values())
+                total_gen_gwh = mw_to_gwh(total_gen_all_types, hours_per_period=1)
+
+                messages.append(f"Total generation (GWh): {total_gen_gwh}")
+                messages.append("Total generation by generator type:")
+
+                for gen_type, total in total_gen_by_type.items():
+                    total_per_type_gwh = mw_to_gwh(total, hours_per_period=1)
+                    messages.append(f"  {gen_type}_(GWh): {total_per_type_gwh}")
+
+                total_battery_discharging_gwh = mw_to_gwh(
+                    total_battery_discharging, hours_per_period=1
+                )
+                total_battery_charging_gwh = mw_to_gwh(
+                    total_battery_charging, hours_per_period=1
+                )
+                messages.append(
+                    f"Total battery discharging (GWh): {total_battery_discharging_gwh}"
+                )
+                messages.append(f"Total battery charging (GWh): {total_battery_charging_gwh}")
+
+            def add_curtailment_metrics():
+                """Add total curtailment.
+                
+                """
+                for curt_file in ["curtailment.json"]:
+                    file_path = os.path.join(folder_name, curt_file)
+
+                    if not os.path.exists(file_path):
+                        continue
+
+                    with open(file_path, "r") as f:
+                        data = json.load(f)
+
+                    total_curtailment = sum(float(value) for value in data.values())
+                    total_curtailment_gwh = mw_to_gwh(total_curtailment, hours_per_period=1)
+
+                    messages.append(f"Total curtailment (GWh): {total_curtailment_gwh}")
+                    return
+
+                print("[WARNING] No curtailment file found.")
+
+            def add_generator_investment_metrics():
+                """Add total number of newly installed generators and
+                installed generators by type.
+
+                """
+                installed_gens = set()
+                installed_gens_by_type = defaultdict(int)
+
+                investment_files = [
+                    "renewable_investments.json",
+                    "dispatchable_investments.json",
+                ]
+                
+                for investment_file in investment_files:
+                    file_path = os.path.join(folder_name, investment_file)
+
+                    if not os.path.exists(file_path):
+                        print(f"[WARNING] File not found: {file_path}")
+                        continue
+
+                    with open(file_path, "r") as f:
+                        data = json.load(f)
+
+                    for key, value in data.items():
+                        is_gen_installed = (
+                            "renewableInstalled" in key or "genInstalled" in key
+                        )
+
+                        if not is_gen_installed or float(value) < 0.001:
+                            continue
+
+                        gen_name = key.split(".")[-1]
+
+                        if gen_name in installed_gens:
+                            continue
+
+                        installed_gens.add(gen_name)
+                
+                        for gen_type in gen_types:
+                            if gen_name.endswith(gen_type):
+                                installed_gens_by_type[gen_type] += 1
+                                break
+
+                messages.append(f"Number of installed generators: {len(installed_gens)}")
+                messages.append("Number of installed generators by type:")
+
+                for gen_type, count in installed_gens_by_type.items():
+                    messages.append(f"  installed_{gen_type}: {count}")
+
+            def add_branch_investment_metrics():
+                """Add total number of newly installed branches.
+
+                """
+                installed_branches = set()
+                file_path = os.path.join(folder_name, "dispatchable_investments.json")
+
+                if not os.path.exists(file_path):
+                    print(f"[WARNING] File not found: {file_path}")
+                    messages.append("Number of installed branches: 0")
+                    return
+
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+
+                for key, value in data.items():
+                    if "branchInstalled" in key and float(value) >= 0.001:
+                        branch_name = key.split(".")[-1]
+                        installed_branches.add(branch_name)
+
+                messages.append(f"Number of installed branches: {len(installed_branches)}")
+
+            add_generation_metrics()
+            add_curtailment_metrics()
+            add_generator_investment_metrics()
+            add_branch_investment_metrics()
+
+            return messages
+
+        def print_generation_for_days(
+            rep_days, time_periods, loads_trace, generation, day_hour_list
+        ):
+            """Prints load and generation by type for multiple (day,
+                hour) pairs.
+
+            :param rep_days: List of representative day strings (e.g., "2034-07-12 00:00")
+            :param time_periods: List of time period tuples (s, p, c, d)
+            :param loads_trace: List of load values per time period
+            :param generation: Nested dict of generation by time period and type
+            :param day_hour_list: List of (target_day, target_hour) tuples
+
+            """
+            messages = []
+            for target_day, target_hour in day_hour_list:
+                # Find the index for desired day and time
+                try:
+                    day_idx = rep_days.index(target_day)
+                except ValueError:
+                    raise ValueError(f"Target day {target_day} not found in rep_days!")
+
+                target_idx = day_idx * 24 + target_hour
+                target_time_period = time_periods[target_idx]
+
+                messages.append(
+                    f"Results for representative day: {target_day}, hour: {target_hour} (index {target_idx})"
+                )
+
+                # Total load
+                total_load_gw = loads_trace[target_idx] / 1000
+                messages.append(f"Total load (GW): {total_load_gw:.2f}")
+
+                # Generation per type
+                messages.append("Generation by type:")
+                for gen_type in [
+                    "cc_gas",
+                    "ct_gas",
+                    "coal",
+                    "nuclear",
+                    "thermal_other",
+                    "hydro",
+                    "solar",
+                    "wind",
+                    "battery_discharge",
+                    "steam",
+                    "dr",
+                    "ES4",
+                    "battery_charge",
+                    "hydro-c",
+                    "gas_cc-c",
+                    "gas_ct-c",
+                    "battery-c",
+                    "wind-c",
+                    "pv-c",
+                    "steam-c",
+                    "ES4-c",
+                ]:
+                    value = generation[target_time_period[0]][target_time_period[1]][
+                        target_time_period[2]
+                    ][target_time_period[3]].get(gen_type, 0)
+                    value_gw = value / 1000
+                    messages.append(f"  {gen_type} (GW): {value_gw:.2f}")
+
+            return messages
+
+        def save_metrics_and_generation_to_csv(
+            results_path,
+            rep_days,
+            time_periods,
+            loads_trace,
+            generation,
+            day_hour_list,
+            output_csv_file,
+        ):
+
+            def split_message(message):
+                if ":" in message:
+                    parts = message.rsplit(":", 1)
+                    label = parts[0].strip()
+                    value = parts[1].strip()
+                    return label, value
+                else:
+                    return message, ""  # No value, just text
+
+            metrics_lines = calculate_metrics(results_path)
+            gen_lines = print_generation_for_days(
+                rep_days, time_periods, loads_trace, generation, day_hour_list
+            )
+
+            with open(output_csv_file, "w", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                writer.writerow(["Description", "Value"])
+                for line in metrics_lines:
+                    label, value = split_message(line)
+                    writer.writerow([label, value])
+                for line in gen_lines:
+                    label, value = split_message(line)
+                    writer.writerow([label, value])
+
+            print(f" -> Saved metrics and generation output to {output_csv_file}")
+
+        plot_generation_pie_chart(
+            generation, time_periods, GEN_TYPES, GEN_TYPE_ALIASES, results_path
         )
-        pass
+        plotly_stackgraph(
+            times,
+            time_periods,
+            generation,
+            GEN_TYPES,
+            GEN_TYPE_ALIASES,
+            GEN_TYPE_HATCHES,
+            HATCH_TO_PATTERN,
+            results_path,
+        )
 
-    def plot_levels(self, save_dir="."):
+        calculate_metrics(results_path)
+        print_generation_for_days(
+            rep_days=rep_days,
+            time_periods=time_periods,
+            loads_trace=loads_trace,
+            generation=generation,
+            day_hour_list=day_hour_list,
+        )
 
-        # self._plot_graph_workhorse()
+        save_metrics_and_generation_to_csv(
+            results_path,
+            rep_days,
+            time_periods,
+            loads_trace,
+            generation,
+            day_hour_list,
+            f"{results_path}/metrics_and_generation_output.csv",
+        )
 
-        # plot or represent primals trees
-        for this_root_level_key in self.primals_tree:
-            if "investmentStage" in this_root_level_key:
-                # run the toplevel keys
-                parent_key_string = f"{this_root_level_key}"
-                self._level_plot_workhorse(
-                    "investmentStage", self.primals_tree, this_root_level_key, save_dir
-                )
+    def create_html_report(self, results_path, plot_type):
 
-                # run the representative period subkeys
-                investment_level_cut = self.primals_tree[this_root_level_key]
-                parent_key_string = f"{this_root_level_key}"
-                self._level_plot_workhorse(
-                    "representativePeriod",
-                    investment_level_cut,
-                    parent_key_string,
-                    save_dir,
-                )
+        def html_results_tab(total_cost):
+            return f"""
+            <div id="Results" class="tabcontent">
+            <h2>Results</h2>
+            <table>
+            <tr><th>Total Cost</th></tr>
+            <tr><td>{total_cost}</td></tr>
+            </table>
+            </div>
+            """
 
-    #             for this_inv_level_key in self.primals_tree[this_root_level_key].keys():
-    #                 if "representativePeriod" in this_inv_level_key:
-    #                     representative_level_cut = self.primals_tree[
-    #                         this_root_level_key
-    #                     ][this_inv_level_key]
-    #                     parent_key_string = (
-    #                         f"{this_root_level_key}_{this_inv_level_key}"
-    #                     )
-    #                     self._level_plot_workhorse(
-    #                         "commitmentPeriod",
-    #                         representative_level_cut,
-    #                         parent_key_string,
-    #                         save_dir,
-    #                     )
+        def html_plots_tab(plot_files, plot_type):
+            html = """
+            <div id="Plots" class="tabcontent">
+            <h2>Plots</h2>
+            """
 
-    #                     for this_rep_level_key in self.primals_tree[
-    #                         this_root_level_key
-    #                     ][this_inv_level_key].keys():
-    #                         if "commitmentPeriod" in this_rep_level_key:
-    #                             commitment_level_cut = self.primals_tree[
-    #                                 this_root_level_key
-    #                             ][this_inv_level_key][this_rep_level_key]
+            plot_map = {
+                "stackplot": ("gen_mix_summary_interactive.html", "Stack Plot"),
+                "treemap": ("treemap_2034_interactive.html", "Treemap"),
+                "piechart": ("pie_leader_2034_interactive.html", "Pie Chart"),
+            }
+            categories = ["Dispatchables", "Renewables"]
 
-    #                             parent_key_string = f"{this_root_level_key}_{this_inv_level_key}_{this_rep_level_key}"
+            for cat in categories:
+                cat_lower = cat.lower()
+                html += f"<h3>{cat}</h3><ul>\n"
+                if plot_type == "all":
+                    for _, (fname, label) in plot_map.items():
+                        html += f'<li><a href="plots/{cat_lower}_{fname}" target="_blank">{label} ({cat})</a></li>\n'
+                elif plot_type in plot_map:
+                    fname, label = plot_map[plot_type]
+                    html += f'<li><a href="plots/{cat_lower}_{fname}" target="_blank">{label} ({cat})</a></li>\n'
+                else:
+                    html += "<li>Plot type not supported</li>\n"
+                html += "</ul>\n"
 
-    #                             self._level_plot_workhorse(
-    #                                 "dispatchPeriod",
-    #                                 commitment_level_cut,
-    #                                 parent_key_string,
-    #                                 save_dir,
-    #                             )
+            # Add Stackgraph section and plot
+            html += "<h3>Stackgraph</h3><ul>\n"
+            html += '<li><a href="plots/stackgraph_generators_interactive.html" target="_blank">Stackgraph</a></li>\n'
+            html += "</ul>\n"
 
-    # # plot or represent expressions
-    # self._expressions_plot_workhorse(
-    #     "investmentStage", self.expressions_tree, 'investmentStage', save_dir
-    # )
-    # for this_root_level_key in self.expressions_tree:
-    #     if "investmentStage" in this_root_level_key:
-    #         investment_level_cut = self.expressions_tree[this_root_level_key]
-    #         parent_key_string = f"{this_root_level_key}"
-    #         self._expressions_plot_workhorse(
-    #             "representativePeriod", investment_level_cut, parent_key_string, save_dir
-    #         )
+            html += "</div>"
+            return html
 
-    #         for this_inv_level_key in self.expressions_tree[this_root_level_key].keys():
-    #             if "representativePeriod" in this_inv_level_key:
-    #                 representative_level_cut = self.expressions_tree[this_root_level_key][this_inv_level_key]
-    #                 parent_key_string = f"{this_root_level_key}_{this_inv_level_key}"
-    #                 self._expressions_plot_workhorse(
-    #                     "commitmentPeriod", representative_level_cut, parent_key_string, save_dir
-    #                 )
+        # Read total cost from costs.json
+        costs_file = f"{results_path}/costs.json"
+        try:
+            with open(costs_file, "r") as f:
+                costs = json.load(f)
+            total_cost = None
+            for k in costs:
+                if "total" in k.lower():
+                    total_cost = costs[k]
+                    break
+            if total_cost is None and costs:
+                total_cost = list(costs.values())[0]
+        except Exception as e:
+            print(f"[WARNING] Could not read total cost from {costs_file}: {e}")
+            total_cost = "N/A"
 
-    #                 for this_rep_level_key in self.expressions_tree[
-    #                     this_root_level_key
-    #                 ][this_inv_level_key].keys():
-    #                     if "commitmentPeriod" in this_rep_level_key:
-    #                         commitment_level_cut = self.expressions_tree[
-    #                             this_root_level_key
-    #                         ][this_inv_level_key][this_rep_level_key]
+        # Manually specify plot files
+        plot_files = [
+            ("Stack Plot (Dispatchables)", "plots/dispatchables_gen_mix_summary.png"),
+            ("Stack Plot (Renewables)", "plots/renewables_gen_mix_summary.png"),
+            ("Treemap (Dispatchables)", "plots/dispatchables_treemap_2034.png"),
+            ("Treemap (Renewables)", "plots/renewables_treemap_2034.png"),
+            ("Pie Chart (Dispatchables)", "plots/dispatchables_pie_leader_2034.png"),
+            ("Pie Chart (Renewables)", "plots/renewables_pie_leader_2034.png"),
+            ("Stackgraph", "plots/stackgraph_generators.png"),
+        ]
 
-    #                         parent_key_string = f"{this_root_level_key}_{this_inv_level_key}_{this_rep_level_key}"
+        html = f"""
+        <html>
+        <head>
+        <title>Expansion Planning Report</title>
+        <style>
+        body {{ font-family: Arial, sans-serif; }}
+        .tab {{
+        overflow: hidden;
+        border-bottom: 1px solid #ccc;
+        background-color: #f1f1f1;
+        }}
+        .tab button {{
+        background-color: inherit;
+        float: left;
+        border: none;
+        outline: none;
+        cursor: pointer;
+        padding: 14px 16px;
+        transition: 0.3s;
+        font-size: 17px;
+        }}
+        .tab button:hover {{ background-color: #ddd; }}
+        .tab button.active {{ background-color: #ccc; }}
+        .tabcontent {{
+        display: none;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-top: none;
+        }}
+        table, th, td {{
+        border: 1px solid #ccc;
+        border-collapse: collapse;
+        padding: 8px;
+        }}
+        </style>
+        <script>
+        function openTab(evt, tabName) {{
+        var i, tabcontent, tablinks;
+        tabcontent = document.getElementsByClassName("tabcontent");
+        for (i = 0; i < tabcontent.length; i++) {{
+        tabcontent[i].style.display = "none";
+        }}
+        tablinks = document.getElementsByClassName("tablinks");
+        for (i = 0; i < tablinks.length; i++) {{
+        tablinks[i].className = tablinks[i].className.replace(" active", "");
+        }}
+        document.getElementById(tabName).style.display = "block";
+        evt.currentTarget.className += " active";
+        }}
+        </script>
+        </head>
+        <body>
+        <h1>Expansion Planning Report</h1>
+        <div class="tab">
+        <button class="tablinks" onclick="openTab(event, 'Results')" id="defaultOpen">Results</button>
+        <button class="tablinks" onclick="openTab(event, 'Plots')">Plots</button>
+        </div>
+        {html_results_tab(total_cost)}
+        {html_plots_tab(plot_files, plot_type)}
+        <script>
+        document.getElementById("defaultOpen").click();
+        </script>
+        </body>
+        </html>
+        """
 
-    #                         self._expressions_plot_workhorse(
-    #                             "dispatchPeriod",commitment_level_cut, parent_key_string, save_dir
-    #                         )
-    # pass
+        html_file = os.path.join(results_path, "gtep_report.html")
+        with open(html_file, "w") as f:
+            f.write(html)
+        print(f" HTML report written to {html_file}")

@@ -39,23 +39,33 @@ class ExpansionPlanningData:
         len_reps=1,
         num_commit=24,
         num_dispatch=1,
-        duration_dispatch=60,
+        duration_representative_period=24,
+        save_period_structure_file=False,
+        period_structure_json_file=None,
     ):
         """Initialize generation & expansion planning data object.
 
-        :param stages: integer number of investment periods
-        :param num_reps: integer number of representative periods per investment period
-        :param len_reps: (for now integer) length of each representative period (in hours)
-        :param num_commit: integer number of commitment periods per representative period
-        :param num_dispatch: integer number of dispatch periods per commitment period
-        :param duration_dispatch: (for now integer) duration of each dispatch period (in minutes)
+        :param: stages: integer number of investment periods
+        :param: num_reps: integer number of representative periods per investment period
+        :param: num_commit: integer number of commitment periods per representative period
+        :param: num_dispatch: integer number of dispatch periods per commitment period
+        :param: duration_representative_period: duration of each representative period
+                (in hours)
+        :param: save_period_structure_file: (optional) If True, saves the generated
+                period structure as a JSON file in the data directory. Default is False.
+        :param: period_structure_json_file: (optional) Path to a JSON file in the data
+                directory specifying the period structure. Overrides scalar/list arguments
+                if provided. Default is None.
+
         """
         self.stages = stages
         self.num_reps = num_reps
         self.len_reps = len_reps
         self.num_commit = num_commit
         self.num_dispatch = num_dispatch
-        self.duration_dispatch = duration_dispatch
+        self.duration_representative_period = duration_representative_period
+        self.save_period_structure_file = save_period_structure_file
+        self.period_structure_json_file = period_structure_json_file
 
     def load_prescient(
         self,
@@ -86,6 +96,7 @@ class ExpansionPlanningData:
                 "data_path": data_path,
                 "num_days": 365,
                 "ruc_horizon": 36,
+                "start_date": "01-01-2034",
             }
 
         else:
@@ -453,7 +464,7 @@ class ExpansionPlanningData:
                     self.md.data["elements"]["generator"][gen]["capital_multiplier"] = 1
                     self.md.data["elements"]["generator"][gen][
                         "extension_multiplier"
-                    ] = 0
+                    ] = 0.1
                     self.md.data["elements"]["generator"][gen][
                         "max_operating_reserve"
                     ] = 1

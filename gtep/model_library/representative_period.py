@@ -238,7 +238,7 @@ def add_representative_period_logical_constraints(b, rep_per):
                     ].dispatchPeriods.first()
                 ]
                 .batteryChargeLevel[bat]
-                == b.commitmentPeriod[b.commitmentPeriods.last()]
+                <= b.commitmentPeriod[b.commitmentPeriods.last()]
                 .dispatchPeriod[
                     b.commitmentPeriod[
                         b.commitmentPeriods.last()

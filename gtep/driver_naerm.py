@@ -296,6 +296,11 @@ if solver == "xpress":
         mod_object.model,
         tee=True,
     )
+else:
+    mod_object.results = opt.solve(
+        mod_object.model,
+        tee=True,
+    )
 
 # Save the results in .json files using the solution class
 dir_name = f"NAERM_initial_testing_{data_date}"

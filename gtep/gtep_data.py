@@ -108,6 +108,10 @@ class ExpansionPlanningData:
         print(prescient_options)
         data_provider = gmlc_data_provider.GmlcDataProvider(options=prescient_options)
 
+        from pathlib import Path
+
+        data_path = str(Path("~/2030_pcm_case/base_case_pcm_2030").expanduser())
+
         # grab details from simulation objects file (data provider above throws error if no simulation_objects.csv exists)
         metadata_path = os.path.join(data_path, "simulation_objects.csv")
         metadata_df = pd.read_csv(metadata_path, index_col=0)

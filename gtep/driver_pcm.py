@@ -223,9 +223,9 @@ if include_candidate_cost_data:
         # ng_cost_path=ng_cost_path,
         candidate_gens=candidate_gens,
         save_csv=False,
-        candidate_gen_csv_path=f"{data_path}/gen.csv",
-        candidate_storage_csv_path=f"{data_path}/storage.csv",
-        candidate_branch_csv_path=f"{data_path}/branch.csv",
+        candidate_gen_csv_path=gen_csv_path,
+        candidate_storage_csv_path=storage_csv_path,
+        candidate_branch_csv_path=branch_csv_path,
     )
 
     print("Candidate generation cost data loaded.")

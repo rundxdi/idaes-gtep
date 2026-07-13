@@ -34,7 +34,7 @@ logger.setLevel(logging.INFO)
 ###############################################################################
 
 # Converted Prescient/GMLC-compatible case directory
-data_path = "/ascldap/users/jkskolf/soraya_gtep/2030_pcm_case/initial_case_2030_test"
+data_path = "~/2030_pcm_case/initial_case_2030_test"
 
 # Representative periods for 2030
 rep_days = [
@@ -46,7 +46,7 @@ rep_days = [
 rep_weights = [1, 1, 1, 1]
 
 # Output folder
-data_date = "2030_converted_case_test"
+data_date = "07-13-2026"
 dir_name = f"GTEP_2030_converted_case_{data_date}"
 os.makedirs(dir_name, exist_ok=True)
 print(f"\nCreated output directory: {dir_name}")

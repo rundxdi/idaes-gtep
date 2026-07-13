@@ -306,7 +306,11 @@ def create_stages(
         # data is not relevant for this case and calling a new one
         # that applies the correct unit conversion.]
         # comps.add_model_cost_parameters(m, b_inv.year)
-        comps.add_model_cost_parameters_from_csv(m, b_inv.year)
+        if m.mc is not None:
+            comps.add_model_cost_parameters_from_csv(m, b_inv.year)
+        else:
+            print("No candidate cost data provided (m.mc is None); skipping add_model_cost_parameters_from_csv.")
+        
         if m.config["storage"]:
             stor.add_storage_cost_parameters_from_csv(m, b_inv.year)
 

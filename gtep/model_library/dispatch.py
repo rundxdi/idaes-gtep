@@ -159,9 +159,14 @@ def add_dispatch_variables(b, dispatch_period, paramPeriodLength):
         else:
             storage_term = 0
 
+        if m.config["advanced_hydro"]:
+            hydro_term = b.hydroGenerationCostDispatch
+        else:
+            hydro_term = 0
+
         return (
             b.thermalGenerationCostDispatch
-            + b.hydroGenerationCostDispatch
+            +hydro_term
             + b.reactiveGenerationCostDispatch
             + b.renewableGenerationCostDispatch
             + b.loadShedCostDispatch

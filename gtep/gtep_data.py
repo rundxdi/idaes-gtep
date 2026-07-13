@@ -23,6 +23,7 @@ from prescient.data.providers import gmlc_data_provider
 import pandas as pd
 import os
 from pathlib import Path
+import numpy as np
 
 
 class ExpansionPlanningData:
@@ -92,7 +93,7 @@ class ExpansionPlanningData:
                 "data_path": data_path,
                 "num_days": 365,
                 "ruc_horizon": 36,
-                "start_date": "01-01-2034",
+                "start_date": "2030-01-01",
             }
 
         else:
@@ -260,11 +261,71 @@ class ExpansionPlanningData:
         # creating representative_data using clone_at_time_keys. This
         # ensures all representative ModelData objects will have the
         # new elements.
+        time_keys = self.md.data["system"].get("time_keys", [])
+
+        
+
+        if not time_keys:
+            ts_path = os.path.join(data_path, "DAY_AHEAD_load.csv")
+            ts_df = pd.read_csv(ts_path)
+
+            time_index = pd.to_datetime(
+                ts_df[["Year", "Month", "Day"]]
+            ) + pd.to_timedelta((ts_df["Period"] - 1) * sced_freq_min, unit="min")
+
+            time_keys = [dt.strftime("%Y-%m-%d %H:%M:%S") for dt in time_index]
+            self.md.data["system"]["time_keys"] = time_keys
+
+                # Build a dataframe from DAY_AHEAD_renewables.csv so we can explicitly
+        # restore renewable p_max values after clone_at_time_keys()
+        renewables_file = os.path.join(data_path, "DAY_AHEAD_renewables.csv")
+        renewables_df = pd.read_csv(renewables_file)
+
+        renewables_df.index = pd.to_datetime(
+            renewables_df[["Year", "Month", "Day"]]
+        ) + pd.to_timedelta((renewables_df["Period"] - 1) * sced_freq_min, unit="min")
+        renewables_df.index.name = "DateTime"
+        renewables_df.drop(["Year", "Month", "Day", "Period"], axis=1, inplace=True)
+
         time_keys = self.md.data["system"]["time_keys"]
+
         for date in self.representative_dates:
-            key_idx = time_keys.index(date)
+            date_dt = pd.to_datetime(date)
+            matches = np.where(pd.to_datetime(time_keys) == date_dt)[0]
+            if len(matches) == 0:
+                raise ValueError(f"Representative date {date} not found in time_keys")
+
+            key_idx = int(matches[0])
             time_key_set = time_keys[key_idx : key_idx + period_per_step]
-            data_list.append(self.md.clone_at_time_keys(time_key_set))
+
+            cloned = self.md.clone_at_time_keys(time_key_set)
+
+            # Explicitly repair renewable p_max values in the clone
+            rep_index = pd.to_datetime(time_key_set)
+            for gen in cloned.data["elements"]["generator"]:
+                gen_dict = cloned.data["elements"]["generator"][gen]
+                if gen_dict.get("generator_type") == "renewable":
+                    if gen in renewables_df.columns:
+                        vals = renewables_df.loc[rep_index, gen].tolist()
+                        gen_dict["p_max"] = {
+                            "data_type": "time_series",
+                            "values": vals,
+                        }
+
+            data_list.append(cloned)
+
+        time_key_dt = pd.to_datetime(time_keys)
+        time_key_str_map = {str(dt): i for i, dt in zip(range(len(time_key_dt)), time_key_dt)}
+        # print("DEBUG first 50 day-start timestamps:")
+        # for t in time_keys[::period_per_step][:50]:
+        #     print(repr(t))
+        # print("DEBUG representative_dates:")
+        # for d in self.representative_dates:
+        #     print(repr(d))
+        # print("DEBUG all candidate day starts every 24 periods:")
+        # for i, t in enumerate(time_keys[::24][:120]):
+        #     print(i, repr(t))
+        # raise SystemExit
 
         self.representative_data = data_list
 

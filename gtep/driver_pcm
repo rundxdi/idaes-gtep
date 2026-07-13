@@ -87,11 +87,55 @@ data_object = ExpansionPlanningData(
 
 print(f"Loading converted case from: {data_path}")
 
+
+print("data_object.num_reps =", getattr(data_object, "num_reps", None))
+print("len(rep_days) =", len(rep_days))
+print("len(rep_weights) =", len(rep_weights))
+# print("len(representative_data) =", len(data_object.representative_data))
+
 data_object.load_prescient(
     data_path,
     representative_dates=rep_days,
     representative_weights=rep_weights,
 )
+
+print("data_object.num_reps =", getattr(data_object, "num_reps", None))
+print("len(rep_days) =", len(rep_days))
+print("len(rep_weights) =", len(rep_weights))
+print("len(representative_data) =", len(data_object.representative_data))
+
+
+from pprint import pprint
+
+print("\n=== Renewable generator p_max inspection ===")
+
+renewables = []
+for gen in data_object.md.data["elements"]["generator"]:
+    g = data_object.md.data["elements"]["generator"][gen]
+    if g.get("generator_type") == "renewable":
+        renewables.append(gen)
+
+print(f"Total renewable generators: {len(renewables)}")
+
+for gen in renewables[:20]:
+    g = data_object.md.data["elements"]["generator"][gen]
+    print(f"\nGenerator: {gen}")
+    print("unit_type:", g.get("unit_type"))
+    print("p_max type:", type(g.get("p_max")))
+    print("p_max value:")
+    pprint(g.get("p_max"))
+
+print("\n=== Representative period renewable p_max inspection ===")
+for gen in renewables[:10]:
+    print(f"\nGenerator: {gen}")
+    for i, rep in enumerate(data_object.representative_data[:2]):
+        try:
+            pmax = rep.data["elements"]["generator"][gen]["p_max"]
+            print(f"  rep {i} type={type(pmax)} value={pmax}")
+        except Exception as e:
+            print(f"  rep {i} ERROR: {e}")
+
+# raise SystemExit
 
 print("Prescient/GMLC case loaded successfully.")
 print(f"Representative periods loaded: {len(data_object.representative_data)}")
@@ -103,6 +147,44 @@ for k, v in data_object.md.data["elements"].items():
         print(f"  {k}: {len(v)}")
     except Exception:
         print(f"  {k}: <non-sized>")
+
+print("\n=== Checking renewable p_max values in representative data ===")
+
+bad = []
+
+for gen in data_object.md.data["elements"]["generator"]:
+    g = data_object.md.data["elements"]["generator"][gen]
+    if g.get("generator_type") != "renewable":
+        continue
+
+    for i, rep in enumerate(data_object.representative_data):
+        try:
+            pmax = rep.data["elements"]["generator"][gen]["p_max"]
+            vals = pmax["values"] if isinstance(pmax, dict) and "values" in pmax else None
+
+            if vals is None:
+                bad.append((gen, i, "missing values field"))
+                continue
+
+            if len(vals) == 0:
+                bad.append((gen, i, "empty values"))
+                continue
+
+            if all(v is None for v in vals):
+                bad.append((gen, i, "all None"))
+                continue
+
+            if any(v is None for v in vals):
+                bad.append((gen, i, "partial None"))
+                continue
+
+        except Exception as e:
+            bad.append((gen, i, f"error: {e}"))
+
+print(f"Found {len(bad)} bad renewable representative-series cases")
+for row in bad[:100]:
+    print(row)
+        
 
 ###############################################################################
 # OPTIONAL COST DATA FOR CANDIDATE GENERATORS
@@ -130,7 +212,7 @@ if include_candidate_cost_data:
     data_processing_object.load_gen_data(
         bus_data_path=bus_data_path,
         cost_data_path=cost_data_path,
-        ng_cost_path=ng_cost_path,
+        # ng_cost_path=ng_cost_path,
         candidate_gens=candidate_gens,
         save_csv=False,
         candidate_gen_csv_path=f"{data_path}/gen.csv",

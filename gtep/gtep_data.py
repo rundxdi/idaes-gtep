@@ -201,29 +201,29 @@ class ExpansionPlanningData:
         # hydro data. NOTE: Prescient does not handle hydro average
         # time series, so we manually add it here from the processed
         # CSV.
-        hydro_avg_file = os.path.join(data_path, "DAY_AHEAD_hydro_average.csv")
-        with open(hydro_avg_file, newline="") as csvfile:
-            reader = csv.DictReader(csvfile)
-            hydro_gens = [
-                col
-                for col in reader.fieldnames
-                if col not in ("Year", "Month", "Day", "Period")
-            ]
-            hydro_data = {gen: [] for gen in hydro_gens}
-            for row in reader:
-                for gen in hydro_gens:
-                    try:
-                        val = float(row[gen])
-                    except (ValueError, TypeError, KeyError):
-                        val = 0.0
-                    hydro_data[gen].append(val)
+        # hydro_avg_file = os.path.join(data_path, "DAY_AHEAD_hydro_average.csv")
+        # with open(hydro_avg_file, newline="") as csvfile:
+        #     reader = csv.DictReader(csvfile)
+        #     hydro_gens = [
+        #         col
+        #         for col in reader.fieldnames
+        #         if col not in ("Year", "Month", "Day", "Period")
+        #     ]
+        #     hydro_data = {gen: [] for gen in hydro_gens}
+        #     for row in reader:
+        #         for gen in hydro_gens:
+        #             try:
+        #                 val = float(row[gen])
+        #             except (ValueError, TypeError, KeyError):
+        #                 val = 0.0
+        #             hydro_data[gen].append(val)
 
-        # Assign to m.md
-        for hydroGen in hydro_gens:
-            self.md.data["elements"]["generator"][hydroGen]["p_average"] = {
-                "data_type": "time_series",
-                "values": hydro_data[hydroGen],
-            }
+        # # Assign to m.md
+        # for hydroGen in hydro_gens:
+        #     self.md.data["elements"]["generator"][hydroGen]["p_average"] = {
+        #         "data_type": "time_series",
+        #         "values": hydro_data[hydroGen],
+        #     }
 
         # Read heat rates from gen.csv
         gen_csv_file = os.path.join(data_path, "gen.csv")

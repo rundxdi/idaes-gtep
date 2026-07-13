@@ -34,7 +34,11 @@ logger.setLevel(logging.INFO)
 ###############################################################################
 
 # Converted Prescient/GMLC-compatible case directory
-data_path = "~/2030_pcm_case/base_case_pcm_2030"
+from pathlib import Path
+
+data_path = Path("~/2030_pcm_case/base_case_pcm_2030").expanduser()
+# data_path = "~/2030_pcm_case/base_case_pcm_2030"
+
 
 # Representative periods for 2030
 rep_days = [

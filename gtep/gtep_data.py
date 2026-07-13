@@ -105,7 +105,7 @@ class ExpansionPlanningData:
 
         # Use prescient data provider to load in sequential data for representative periods
         data_list = []
-
+        print(prescient_options)
         data_provider = gmlc_data_provider.GmlcDataProvider(options=prescient_options)
 
         # grab details from simulation objects file (data provider above throws error if no simulation_objects.csv exists)

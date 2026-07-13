@@ -39,9 +39,9 @@ from pathlib import Path
 # data_path = "~/2030_pcm_case/base_case_pcm_2030"
 data_path = "/ascldap/users/jkskolf/2030_pcm_case/base_case_pcm_2030"
 
-gen_csv_path = data_path / "gen.csv"
-storage_csv_path = data_path / "storage.csv"
-branch_csv_path = data_path / "branch.csv"
+# gen_csv_path = data_path / "gen.csv"
+# storage_csv_path = data_path / "storage.csv"
+# branch_csv_path = data_path / "branch.csv"
 
 
 # Representative periods for 2030

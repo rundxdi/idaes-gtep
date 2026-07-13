@@ -38,7 +38,7 @@ from pathlib import Path
 
 # data_path = "~/2030_pcm_case/base_case_pcm_2030"
 data_path = "/ascldap/users/jkskolf/2030_pcm_case/base_case_pcm_2030"
-
+print(data_path)
 # gen_csv_path = data_path / "gen.csv"
 # storage_csv_path = data_path / "storage.csv"
 # branch_csv_path = data_path / "branch.csv"
@@ -93,6 +93,7 @@ data_object = ExpansionPlanningData(
     period_structure_json_file=None,
 )
 
+print(data_path)
 print(f"Loading converted case from: {data_path}")
 
 

@@ -37,7 +37,7 @@ logger.setLevel(logging.INFO)
 from pathlib import Path
 
 # data_path = "~/2030_pcm_case/base_case_pcm_2030"
-data_path = Path("~/2030_pcm_case/base_case_pcm_2030").expanduser()
+data_path = "/ascldap/users/jkskolf/2030_pcm_case/base_case_pcm_2030"
 
 gen_csv_path = data_path / "gen.csv"
 storage_csv_path = data_path / "storage.csv"

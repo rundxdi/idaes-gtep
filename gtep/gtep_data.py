@@ -231,6 +231,8 @@ class ExpansionPlanningData:
         #     }
 
         # Read heat rates from gen.csv
+        print(data_path)
+        
         gen_csv_file = os.path.join(data_path, "gen.csv")
         heat_rate_dict = {}
         with open(gen_csv_file, newline="") as csvfile:

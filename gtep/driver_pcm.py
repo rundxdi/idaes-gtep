@@ -279,7 +279,7 @@ elif solver == "highs":
 elif solver == "xpress":
     opt = pyo.SolverFactory("xpress")
     # If using xpress, uncomment:
-    xpress.init("/Users/jkskolf/naerm_xpauth.xpr")
+    xpress.init("naerm_xpauth.xpr")
 else:
     raise ValueError(f"Unsupported solver: {solver}")
 

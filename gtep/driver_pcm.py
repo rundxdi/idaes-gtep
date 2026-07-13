@@ -34,7 +34,7 @@ logger.setLevel(logging.INFO)
 ###############################################################################
 
 # Converted Prescient/GMLC-compatible case directory
-data_path = "~/2030_pcm_case/initial_case_2030_test"
+data_path = "~/base_pcm_case/2030_pcm_case"
 
 # Representative periods for 2030
 rep_days = [

@@ -26,6 +26,156 @@ from gtep.gtep_data_processing import DataProcessing
 # Optional if using xpress
 import xpress
 
+import math
+
+def sanitize_loaded_md(md, representative_data=None):
+    """
+    Clean NaN / None values in loaded Egret model data and representative data.
+
+    - fixes branch ratings/reactance/resistance
+    - fixes renewable p_max timeseries values
+    - fixes generator p_min/p_max/ramp fields
+    - fixes storage rates/capacity if present
+    """
+    elems = md.data["elements"]
+
+    # ------------------------------------------------------------------
+    # generators in base md
+    # ------------------------------------------------------------------
+    for gen, g in elems.get("generator", {}).items():
+        for key, fallback in [
+            ("p_min", 0.0),
+            ("p_max", 0.0),
+            ("startup_capacity", 0.0),
+            ("shutdown_capacity", 0.0),
+            ("ramp_up_60min", 0.0),
+            ("ramp_down_60min", 0.0),
+            ("ramp_q", 0.0),
+            ("ramp_agc", 0.0),
+            ("fuel_cost", 0.0),
+            ("non_fuel_startup_cost", 0.0),
+            ("min_up_time", 1.0),
+            ("min_down_time", 1.0),
+            ("spinning_reserve_frac", 0.0),
+            ("quickstart_reserve_frac", 0.0),
+            ("max_spinning_reserve", 0.0),
+            ("max_quickstart_reserve", 0.0),
+            ("heat_rate", 0.0),
+        ]:
+            if key in g:
+                try:
+                    if g[key] is None or (isinstance(g[key], float) and math.isnan(g[key])):
+                        g[key] = fallback
+                except Exception:
+                    g[key] = fallback
+
+    # ------------------------------------------------------------------
+    # branches in base md
+    # ------------------------------------------------------------------
+    for br, b in elems.get("branch", {}).items():
+        for key, fallback in [
+            ("resistance", 0.0),
+            ("reactance", 1e-6),  # avoid divide-by-zero / NaN
+            ("charging_susceptance", 0.0),
+            ("rating_long_term", 0.0),
+            ("rating_short_term", 0.0),
+            ("rating_emergency", 0.0),
+        ]:
+            if key in b:
+                try:
+                    if b[key] is None or (isinstance(b[key], float) and math.isnan(b[key])):
+                        b[key] = fallback
+                except Exception:
+                    b[key] = fallback
+
+    # ------------------------------------------------------------------
+    # dc branches in base md
+    # ------------------------------------------------------------------
+    for br, b in elems.get("dc_branch", {}).items():
+        for key, fallback in [
+            ("rating_long_term", 0.0),
+            ("rating_short_term", 0.0),
+            ("rating_emergency", 0.0),
+        ]:
+            if key in b:
+                try:
+                    if b[key] is None or (isinstance(b[key], float) and math.isnan(b[key])):
+                        b[key] = fallback
+                except Exception:
+                    b[key] = fallback
+
+    # ------------------------------------------------------------------
+    # storage in base md
+    # ------------------------------------------------------------------
+    for s, st in elems.get("storage", {}).items():
+        for key, fallback in [
+            ("max_discharge_rate", 0.0),
+            ("min_discharge_rate", 0.0),
+            ("max_charge_rate", 0.0),
+            ("min_charge_rage", 0.0),
+            ("energy_capacity", 0.0),
+            ("initial_state_of_charge", 0.5),
+            ("minimum_state_of_charge", 0.0),
+            ("charge_efficiency", 1.0),
+            ("discharge_efficiency", 1.0),
+            ("ramp_up_input_60min", 0.0),
+            ("ramp_up_output_60min", 0.0),
+            ("ramp_down_input_60min", 0.0),
+            ("ramp_down_output_60min", 0.0),
+        ]:
+            if key in st:
+                try:
+                    if st[key] is None or (isinstance(st[key], float) and math.isnan(st[key])):
+                        st[key] = fallback
+                except Exception:
+                    st[key] = fallback
+
+    # ------------------------------------------------------------------
+    # representative data renewable p_max cleanup
+    # ------------------------------------------------------------------
+    if representative_data is not None:
+        for rep in representative_data:
+            for gen, g in rep.data["elements"].get("generator", {}).items():
+                if g.get("generator_type") == "renewable":
+                    pmax = g.get("p_max")
+
+                    # dict time series case
+                    if isinstance(pmax, dict) and "values" in pmax:
+                        vals = pmax.get("values", [])
+                        fallback = 0.0
+
+                        # derive fallback from static/base md
+                        base_g = elems["generator"].get(gen, {})
+                        base_pmax = base_g.get("p_max", 0.0)
+
+                        if isinstance(base_pmax, (int, float)):
+                            fallback = float(base_pmax)
+                        elif isinstance(base_pmax, dict):
+                            if "reference_value" in base_pmax and base_pmax["reference_value"] is not None:
+                                fallback = float(base_pmax["reference_value"])
+                            elif "values" in base_pmax and base_pmax["values"]:
+                                try:
+                                    fallback = max(
+                                        float(v) for v in base_pmax["values"]
+                                        if v is not None and not (isinstance(v, float) and math.isnan(v))
+                                    )
+                                except Exception:
+                                    fallback = 0.0
+
+                        cleaned = []
+                        for v in vals:
+                            if v is None or (isinstance(v, float) and math.isnan(v)):
+                                cleaned.append(fallback)
+                            else:
+                                cleaned.append(float(v))
+                        g["p_max"]["values"] = cleaned
+
+                    # scalar pmax case
+                    elif pmax is None or (isinstance(pmax, float) and math.isnan(pmax)):
+                        g["p_max"] = 0.0
+
+    return md
+
 logger = logging.getLogger("gtep.driver_naerm")
 logger.setLevel(logging.INFO)
 
@@ -234,6 +384,30 @@ if include_candidate_cost_data:
 ###############################################################################
 # BUILD GTEP MODEL
 ###############################################################################
+
+# Check specific bad generator
+gname = "MilnerButteL_9aab36f6"
+for i, rep in enumerate(data_object.representative_data):
+    if gname in rep.data["elements"]["generator"]:
+        print("rep", i, gname, rep.data["elements"]["generator"][gname].get("p_max"))
+
+# Check specific bad branch
+bname = "10289_10558_1"
+if bname in data_object.md.data["elements"]["branch"]:
+    print("branch", bname, data_object.md.data["elements"]["branch"][bname])
+
+sanitize_loaded_md(data_object.md, data_object.representative_data)
+
+# Check specific bad generator
+gname = "MilnerButteL_9aab36f6"
+for i, rep in enumerate(data_object.representative_data):
+    if gname in rep.data["elements"]["generator"]:
+        print("rep", i, gname, rep.data["elements"]["generator"][gname].get("p_max"))
+
+# Check specific bad branch
+bname = "10289_10558_1"
+if bname in data_object.md.data["elements"]["branch"]:
+    print("branch", bname, data_object.md.data["elements"]["branch"][bname])
 
 print("Creating ExpansionPlanningModel...")
 

@@ -105,10 +105,8 @@ class ExpansionPlanningData:
 
         # Use prescient data provider to load in sequential data for representative periods
         data_list = []
-        print(prescient_options)
         data_provider = gmlc_data_provider.GmlcDataProvider(options=prescient_options)
 
-        from pathlib import Path
 
         data_path = str(Path("~/2030_pcm_case/base_case_pcm_2030").expanduser())
 
@@ -232,7 +230,7 @@ class ExpansionPlanningData:
 
         # Read heat rates from gen.csv
         print(data_path)
-        
+
         gen_csv_file = os.path.join(data_path, "gen.csv")
         heat_rate_dict = {}
         with open(gen_csv_file, newline="") as csvfile:

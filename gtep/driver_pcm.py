@@ -77,9 +77,9 @@ def sanitize_loaded_md(md, representative_data=None):
             ("resistance", 0.0),
             ("reactance", 1e-6),  # avoid divide-by-zero / NaN
             ("charging_susceptance", 0.0),
-            ("rating_long_term", 0.0),
-            ("rating_short_term", 0.0),
-            ("rating_emergency", 0.0),
+            ("rating_long_term", 1.0),
+            ("rating_short_term", 1.0),
+            ("rating_emergency", 1.0),
         ]:
             if key in b:
                 try:
@@ -93,9 +93,9 @@ def sanitize_loaded_md(md, representative_data=None):
     # ------------------------------------------------------------------
     for br, b in elems.get("dc_branch", {}).items():
         for key, fallback in [
-            ("rating_long_term", 0.0),
-            ("rating_short_term", 0.0),
-            ("rating_emergency", 0.0),
+            ("rating_long_term", 1.0),
+            ("rating_short_term", 1.0),
+            ("rating_emergency", 1.0),
         ]:
             if key in b:
                 try:

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# driver_pcm.py
 
 from __future__ import annotations
 
@@ -26,6 +25,7 @@ LOG_FILE = LOG_DIR / "driver_pcm.log"
 
 logger = logging.getLogger("gtep.driver_pcm")
 logger.setLevel(logging.INFO)
+logger.handlers.clear()
 
 formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 
@@ -37,7 +37,6 @@ sh = logging.StreamHandler()
 sh.setLevel(logging.INFO)
 sh.setFormatter(formatter)
 
-logger.handlers.clear()
 logger.addHandler(fh)
 logger.addHandler(sh)
 
@@ -61,8 +60,6 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 SOLVER_NAME = "gurobi"
 # SOLVER_NAME = "highs"
 
-USE_COST_DATA = False  # explicitly off per request
-
 
 # ---------------------------------------------------------------------
 # diagnostics / sanitation helpers
@@ -81,7 +78,6 @@ def log_case_path_info(data_path: Path):
 def sanitize_loaded_md(md, representative_data=None):
     elems = md.data["elements"]
 
-    # generators in base md
     for gen, g in elems.get("generator", {}).items():
         for key, fallback in [
             ("p_min", 0.0),
@@ -109,7 +105,6 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     g[key] = fallback
 
-    # branches in base md
     for br, b in elems.get("branch", {}).items():
         for key, fallback in [
             ("resistance", 0.0),
@@ -126,7 +121,6 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     b[key] = fallback
 
-    # dc branches
     for br, b in elems.get("dc_branch", {}).items():
         for key, fallback in [
             ("rating_long_term", 100.0),
@@ -140,22 +134,27 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     b[key] = fallback
 
-    # storage
     for s, st in elems.get("storage", {}).items():
         for key, fallback in [
             ("max_discharge_rate", 0.0),
             ("min_discharge_rate", 0.0),
             ("max_charge_rate", 0.0),
-            ("min_charge_rage", 0.0),
+            ("min_charge_rate", 0.0),
             ("energy_capacity", 0.0),
             ("initial_state_of_charge", 0.5),
             ("minimum_state_of_charge", 0.0),
             ("charge_efficiency", 1.0),
             ("discharge_efficiency", 1.0),
+            ("retention_rate_60min", 1.0),
+            ("capital_multiplier", 1.0),
+            ("extension_multiplier", 0.0),
             ("ramp_up_input_60min", 0.0),
             ("ramp_up_output_60min", 0.0),
             ("ramp_down_input_60min", 0.0),
             ("ramp_down_output_60min", 0.0),
+            ("charge_cost", 0.0),
+            ("discharge_cost", 0.0),
+            ("investment_cost", 0.0),
         ]:
             if key in st:
                 try:
@@ -163,8 +162,16 @@ def sanitize_loaded_md(md, representative_data=None):
                         st[key] = fallback
                 except Exception:
                     st[key] = fallback
+            else:
+                st[key] = fallback
 
-    # representative renewable pmax cleanup
+        # backward compatibility if converter/storage CSV ever used typo
+        if "min_charge_rage" in st and "min_charge_rate" not in st:
+            try:
+                st["min_charge_rate"] = safe_float(st["min_charge_rage"], 0.0)
+            except Exception:
+                st["min_charge_rate"] = 0.0
+
     if representative_data is not None:
         for rep in representative_data:
             for gen, g in rep.data["elements"].get("generator", {}).items():
@@ -208,6 +215,13 @@ def sanitize_loaded_md(md, representative_data=None):
                         g["p_max"] = 0.0
 
     return md
+
+
+def safe_float(x, default=np.nan):
+    try:
+        return float(x)
+    except Exception:
+        return default
 
 
 def export_bad_inputs(data_object, outdir: Path):
@@ -309,15 +323,8 @@ def log_converter_fill_reports(data_path: Path):
                 logger.warning("Could not read %s: %s", fpath, e)
 
 
-# ---------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------
-
 def main():
     log_case_path_info(DATA_PATH)
-
-    rep_days = REP_DAYS
-    rep_weights = REP_WEIGHTS
 
     logger.info("Creating ExpansionPlanningData object...")
     data_object = ExpansionPlanningData(
@@ -331,8 +338,8 @@ def main():
     logger.info("Loading Prescient case...")
     data_object.load_prescient(
         str(DATA_PATH),
-        representative_dates=rep_days,
-        representative_weights=rep_weights,
+        representative_dates=REP_DAYS,
+        representative_weights=REP_WEIGHTS,
         options_dict={
             "data_path": str(DATA_PATH),
             "num_days": 365,
@@ -344,22 +351,20 @@ def main():
 
     logger.info("Prescient case loaded successfully.")
     logger.info("data_object.num_reps = %s", getattr(data_object, "num_reps", None))
-    logger.info("len(rep_days) = %s", len(rep_days))
-    logger.info("len(rep_weights) = %s", len(rep_weights))
+    logger.info("len(REP_DAYS) = %s", len(REP_DAYS))
+    logger.info("len(REP_WEIGHTS) = %s", len(REP_WEIGHTS))
     logger.info("len(representative_data) = %s", len(data_object.representative_data))
 
-    # Defensive trim if local period logic created extras
-    if len(data_object.representative_data) != len(rep_days):
+    if len(data_object.representative_data) != len(REP_DAYS):
         logger.warning(
             "Representative period count mismatch: built %s, expected %s. Trimming.",
             len(data_object.representative_data),
-            len(rep_days),
+            len(REP_DAYS),
         )
-        data_object.representative_data = data_object.representative_data[: len(rep_days)]
+        data_object.representative_data = data_object.representative_data[: len(REP_DAYS)]
 
     logger.info("Final representative_data length = %s", len(data_object.representative_data))
 
-    # Log representative period boundaries
     for i, rep in enumerate(data_object.representative_data):
         try:
             keys = rep.data["system"]["time_keys"]
@@ -367,20 +372,15 @@ def main():
         except Exception:
             logger.info("rep %s unable to report time_keys", i)
 
-    # Log converter-side fill reports
     log_converter_fill_reports(DATA_PATH)
 
-    # Export bad inputs BEFORE sanitation
     export_bad_inputs(data_object, OUTPUT_DIR)
 
-    # Apply sanitation
     sanitize_loaded_md(data_object.md, data_object.representative_data)
     logger.info("Applied sanitize_loaded_md()")
 
-    # Export bad inputs AFTER sanitation
     export_bad_inputs(data_object, OUTPUT_DIR)
 
-    # Targeted diagnostics
     bad_gen = "MilnerButteL_9aab36f6"
     if bad_gen in data_object.md.data["elements"]["generator"]:
         for i, rep in enumerate(data_object.representative_data):
@@ -415,7 +415,6 @@ def main():
     mod_object.config["flow_model"] = "transport"
     mod_object.config["advanced_hydro"] = True
 
-    # Save config
     config_csv_path = OUTPUT_DIR / "model_config.csv"
     with open(config_csv_path, mode="w", newline="") as f:
         writer = csv.writer(f)

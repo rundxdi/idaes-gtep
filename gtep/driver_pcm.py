@@ -197,14 +197,14 @@ print(data_path)
 # Representative periods for 2030
 rep_days = [
     "2030-01-28 00:00",
-    "2030-04-23 00:00",
-    "2030-07-05 00:00",
-    "2030-10-14 00:00",
+    # "2030-04-23 00:00",
+    # "2030-07-05 00:00",
+    # "2030-10-14 00:00",
 ]
-rep_weights = [1, 1, 1, 1]
+rep_weights = [1]
 
 # Output folder
-data_date = "07-13-2026"
+data_date = "07-14-2026"
 dir_name = f"GTEP_2030_converted_case_{data_date}"
 os.makedirs(dir_name, exist_ok=True)
 print(f"\nCreated output directory: {dir_name}")

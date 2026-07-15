@@ -427,6 +427,7 @@ def export_bad_inputs(data_object, outdir="."):
     bad_branch_df.to_csv(bad_branch_path, index=False)
     print(f"Wrote branch rating diagnostics to {bad_branch_path}")
         
+export_bad_inputs(data_object, dir_name)
 
 ###############################################################################
 # OPTIONAL COST DATA FOR CANDIDATE GENERATORS

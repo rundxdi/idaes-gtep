@@ -235,10 +235,10 @@ print("Creating ExpansionPlanningData object...")
 # period_structure_json_file, comment those out and use the simpler API.
 data_object = ExpansionPlanningData(
     stages=1,
-    num_reps=4,
-    num_commit=24,
+    num_reps=1,
+    num_commit=1,
     num_dispatch=1,
-    duration_representative_period=24,
+    duration_representative_period=1,
     save_period_structure_file=False,
     period_structure_json_file=None,
 )

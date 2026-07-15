@@ -217,7 +217,7 @@ def sanitize_loaded_md(md, representative_data=None):
     return md
 
 
-def safe_float(x, default=np.nan):
+def safe_float(x, default=0.0):
     try:
         return float(x)
     except Exception:

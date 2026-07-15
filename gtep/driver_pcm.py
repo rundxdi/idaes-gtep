@@ -1,49 +1,87 @@
-#################################################################################
-# The Institute for the Design of Advanced Energy Systems Integrated Platform
-# Framework (IDAES IP) was produced under the DOE Institute for the
-# Design of Advanced Energy Systems (IDAES).
-#
-# Copyright (c) 2018-2026 by the software owners: The Regents of the
-# University of California, through Lawrence Berkeley National Laboratory,
-# National Technology & Engineering Solutions of Sandia, LLC, Carnegie Mellon
-# University, West Virginia University Research Corporation, et al.
-# All rights reserved.  Please see the files COPYRIGHT.md and LICENSE.md
-# for full copyright and license information.
-#################################################################################
+#!/usr/bin/env python3
+# driver_pcm.py
 
-import os
+from __future__ import annotations
+
 import csv
 import logging
+from logging.handlers import RotatingFileHandler
+import math
+from pathlib import Path
+
+import pandas as pd
 import pyomo.environ as pyo
-from pyomo.contrib.appsi.solvers.highs import Highs
-from pyomo.contrib.appsi.solvers.gurobi import Gurobi
 
 from gtep.gtep_model import ExpansionPlanningModel
 from gtep.gtep_data import ExpansionPlanningData
-from gtep.gtep_solution import ExpansionPlanningSolution
-from gtep.gtep_data_processing import DataProcessing
 
-import pandas as pd
 
-# Optional if using xpress
-import xpress
+# ---------------------------------------------------------------------
+# logging
+# ---------------------------------------------------------------------
 
-import math
+LOG_DIR = Path("./logs")
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOG_DIR / "driver_pcm.log"
+
+logger = logging.getLogger("gtep.driver_pcm")
+logger.setLevel(logging.INFO)
+
+formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+
+fh = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3)
+fh.setLevel(logging.INFO)
+fh.setFormatter(formatter)
+
+sh = logging.StreamHandler()
+sh.setLevel(logging.INFO)
+sh.setFormatter(formatter)
+
+logger.handlers.clear()
+logger.addHandler(fh)
+logger.addHandler(sh)
+
+
+# ---------------------------------------------------------------------
+# config
+# ---------------------------------------------------------------------
+
+DATA_PATH = Path("~/2030_pcm_case/base_case_pcm_2030").expanduser()
+REP_DAYS = [
+    "2030-01-28 00:00:00",
+    "2030-04-23 00:00:00",
+    "2030-07-05 00:00:00",
+    "2030-10-14 00:00:00",
+]
+REP_WEIGHTS = [1, 1, 1, 1]
+
+OUTPUT_DIR = Path("./GTEP_2030_run")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+SOLVER_NAME = "gurobi"
+# SOLVER_NAME = "highs"
+
+USE_COST_DATA = False  # explicitly off per request
+
+
+# ---------------------------------------------------------------------
+# diagnostics / sanitation helpers
+# ---------------------------------------------------------------------
+
+def log_case_path_info(data_path: Path):
+    logger.info("Using data path: %s", data_path)
+    logger.info("data path exists: %s", data_path.exists())
+    logger.info("gen.csv exists: %s", (data_path / "gen.csv").exists())
+    logger.info("branch.csv exists: %s", (data_path / "branch.csv").exists())
+    logger.info("storage.csv exists: %s", (data_path / "storage.csv").exists())
+    logger.info("simulation_objects.csv exists: %s", (data_path / "simulation_objects.csv").exists())
+    logger.info("timeseries_pointers.csv exists: %s", (data_path / "timeseries_pointers.csv").exists())
+
 
 def sanitize_loaded_md(md, representative_data=None):
-    """
-    Clean NaN / None values in loaded Egret model data and representative data.
-
-    - fixes branch ratings/reactance/resistance
-    - fixes renewable p_max timeseries values
-    - fixes generator p_min/p_max/ramp fields
-    - fixes storage rates/capacity if present
-    """
     elems = md.data["elements"]
 
-    # ------------------------------------------------------------------
     # generators in base md
-    # ------------------------------------------------------------------
     for gen, g in elems.get("generator", {}).items():
         for key, fallback in [
             ("p_min", 0.0),
@@ -71,17 +109,15 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     g[key] = fallback
 
-    # ------------------------------------------------------------------
     # branches in base md
-    # ------------------------------------------------------------------
     for br, b in elems.get("branch", {}).items():
         for key, fallback in [
             ("resistance", 0.0),
-            ("reactance", 1e-6),  # avoid divide-by-zero / NaN
+            ("reactance", 1e-6),
             ("charging_susceptance", 0.0),
-            ("rating_long_term", 1.0),
-            ("rating_short_term", 1.0),
-            ("rating_emergency", 1.0),
+            ("rating_long_term", 100.0),
+            ("rating_short_term", 100.0),
+            ("rating_emergency", 100.0),
         ]:
             if key in b:
                 try:
@@ -90,14 +126,12 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     b[key] = fallback
 
-    # ------------------------------------------------------------------
-    # dc branches in base md
-    # ------------------------------------------------------------------
+    # dc branches
     for br, b in elems.get("dc_branch", {}).items():
         for key, fallback in [
-            ("rating_long_term", 1.0),
-            ("rating_short_term", 1.0),
-            ("rating_emergency", 1.0),
+            ("rating_long_term", 100.0),
+            ("rating_short_term", 100.0),
+            ("rating_emergency", 100.0),
         ]:
             if key in b:
                 try:
@@ -106,9 +140,7 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     b[key] = fallback
 
-    # ------------------------------------------------------------------
-    # storage in base md
-    # ------------------------------------------------------------------
+    # storage
     for s, st in elems.get("storage", {}).items():
         for key, fallback in [
             ("max_discharge_rate", 0.0),
@@ -132,35 +164,35 @@ def sanitize_loaded_md(md, representative_data=None):
                 except Exception:
                     st[key] = fallback
 
-    # ------------------------------------------------------------------
-    # representative data renewable p_max cleanup
-    # ------------------------------------------------------------------
+    # representative renewable pmax cleanup
     if representative_data is not None:
         for rep in representative_data:
             for gen, g in rep.data["elements"].get("generator", {}).items():
                 if g.get("generator_type") == "renewable":
                     pmax = g.get("p_max")
 
-                    # dict time series case
                     if isinstance(pmax, dict) and "values" in pmax:
                         vals = pmax.get("values", [])
                         fallback = 0.0
 
-                        # derive fallback from static/base md
                         base_g = elems["generator"].get(gen, {})
                         base_pmax = base_g.get("p_max", 0.0)
 
                         if isinstance(base_pmax, (int, float)):
-                            fallback = float(base_pmax)
+                            try:
+                                fallback = max(float(base_pmax), 0.0)
+                            except Exception:
+                                fallback = 0.0
                         elif isinstance(base_pmax, dict):
                             if "reference_value" in base_pmax and base_pmax["reference_value"] is not None:
-                                fallback = float(base_pmax["reference_value"])
+                                fallback = max(float(base_pmax["reference_value"]), 0.0)
                             elif "values" in base_pmax and base_pmax["values"]:
                                 try:
-                                    fallback = max(
+                                    good = [
                                         float(v) for v in base_pmax["values"]
                                         if v is not None and not (isinstance(v, float) and math.isnan(v))
-                                    )
+                                    ]
+                                    fallback = max(good) if good else 0.0
                                 except Exception:
                                     fallback = 0.0
 
@@ -169,185 +201,16 @@ def sanitize_loaded_md(md, representative_data=None):
                             if v is None or (isinstance(v, float) and math.isnan(v)):
                                 cleaned.append(fallback)
                             else:
-                                cleaned.append(float(v))
+                                cleaned.append(max(float(v), 0.0))
                         g["p_max"]["values"] = cleaned
 
-                    # scalar pmax case
                     elif pmax is None or (isinstance(pmax, float) and math.isnan(pmax)):
                         g["p_max"] = 0.0
 
     return md
 
-logger = logging.getLogger("gtep.driver_naerm")
-logger.setLevel(logging.INFO)
 
-###############################################################################
-# USER INPUTS
-###############################################################################
-
-# Converted Prescient/GMLC-compatible case directory
-from pathlib import Path
-
-# data_path = "~/2030_pcm_case/base_case_pcm_2030"
-data_path = "/ascldap/users/jkskolf/2030_pcm_case/base_case_pcm_2030"
-print(data_path)
-# gen_csv_path = data_path / "gen.csv"
-# storage_csv_path = data_path / "storage.csv"
-# branch_csv_path = data_path / "branch.csv"
-
-
-# Representative periods for 2030
-rep_days = [
-    "2030-01-28 00:00",
-    # "2030-04-23 00:00",
-    # "2030-07-05 00:00",
-    # "2030-10-14 00:00",
-]
-rep_weights = [1]
-
-# Output folder
-data_date = "07-14-2026"
-dir_name = f"GTEP_2030_converted_case_{data_date}"
-os.makedirs(dir_name, exist_ok=True)
-print(f"\nCreated output directory: {dir_name}")
-
-# Toggle candidate cost processing
-include_candidate_cost_data = False
-
-# Candidate generation cost files (only used if include_candidate_cost_data = True)
-bus_data_path = "./data/costs/Bus_data_gen_weights_mappings.csv"
-cost_data_path = "./data/costs/2022_v3_Annual_Technology_Baseline_Workbook_Mid-year_update_2-15-2023_Clean.xlsx"
-ng_cost_path = "./data/costs/Total_Energy_Supply_Disposition_and_Price_Summary.csv"
-candidate_gens = [
-    "Natural Gas_CT",
-    "Natural Gas_FE",
-    "Solar - Utility PV",
-    "Land-Based Wind",
-]
-
-###############################################################################
-# LOAD DATA
-###############################################################################
-
-print("Creating ExpansionPlanningData object...")
-
-# Keep same style as your driver_naerm.py
-# NOTE: if your installed gtep_data.py does not support
-# duration_representative_period / save_period_structure_file /
-# period_structure_json_file, comment those out and use the simpler API.
-data_object = ExpansionPlanningData(
-    stages=1,
-    num_reps=1,
-    num_commit=1,
-    num_dispatch=1,
-    duration_representative_period=1,
-    save_period_structure_file=False,
-    period_structure_json_file=None,
-)
-
-print(data_path)
-print(f"Loading converted case from: {data_path}")
-
-
-print("data_object.num_reps =", getattr(data_object, "num_reps", None))
-print("len(rep_days) =", len(rep_days))
-print("len(rep_weights) =", len(rep_weights))
-# print("len(representative_data) =", len(data_object.representative_data))
-
-data_object.load_prescient(
-    data_path,
-    representative_dates=rep_days,
-    representative_weights=rep_weights,
-)
-
-print("data_object.num_reps =", getattr(data_object, "num_reps", None))
-print("len(rep_days) =", len(rep_days))
-print("len(rep_weights) =", len(rep_weights))
-print("len(representative_data) =", len(data_object.representative_data))
-
-
-from pprint import pprint
-
-print("\n=== Renewable generator p_max inspection ===")
-
-renewables = []
-for gen in data_object.md.data["elements"]["generator"]:
-    g = data_object.md.data["elements"]["generator"][gen]
-    if g.get("generator_type") == "renewable":
-        renewables.append(gen)
-
-print(f"Total renewable generators: {len(renewables)}")
-
-for gen in renewables[:20]:
-    g = data_object.md.data["elements"]["generator"][gen]
-    print(f"\nGenerator: {gen}")
-    print("unit_type:", g.get("unit_type"))
-    print("p_max type:", type(g.get("p_max")))
-    print("p_max value:")
-    pprint(g.get("p_max"))
-
-print("\n=== Representative period renewable p_max inspection ===")
-for gen in renewables[:10]:
-    print(f"\nGenerator: {gen}")
-    for i, rep in enumerate(data_object.representative_data[:2]):
-        try:
-            pmax = rep.data["elements"]["generator"][gen]["p_max"]
-            print(f"  rep {i} type={type(pmax)} value={pmax}")
-        except Exception as e:
-            print(f"  rep {i} ERROR: {e}")
-
-# raise SystemExit
-
-print("Prescient/GMLC case loaded successfully.")
-print(f"Representative periods loaded: {len(data_object.representative_data)}")
-print(f"Top-level keys: {list(data_object.md.data.keys())}")
-print(f"Element groups: {list(data_object.md.data['elements'].keys())}")
-
-for k, v in data_object.md.data["elements"].items():
-    try:
-        print(f"  {k}: {len(v)}")
-    except Exception:
-        print(f"  {k}: <non-sized>")
-
-print("\n=== Checking renewable p_max values in representative data ===")
-
-bad = []
-
-for gen in data_object.md.data["elements"]["generator"]:
-    g = data_object.md.data["elements"]["generator"][gen]
-    if g.get("generator_type") != "renewable":
-        continue
-
-    for i, rep in enumerate(data_object.representative_data):
-        try:
-            pmax = rep.data["elements"]["generator"][gen]["p_max"]
-            vals = pmax["values"] if isinstance(pmax, dict) and "values" in pmax else None
-
-            if vals is None:
-                bad.append((gen, i, "missing values field"))
-                continue
-
-            if len(vals) == 0:
-                bad.append((gen, i, "empty values"))
-                continue
-
-            if all(v is None for v in vals):
-                bad.append((gen, i, "all None"))
-                continue
-
-            if any(v is None for v in vals):
-                bad.append((gen, i, "partial None"))
-                continue
-
-        except Exception as e:
-            bad.append((gen, i, f"error: {e}"))
-
-print(f"Found {len(bad)} bad renewable representative-series cases")
-for row in bad[:100]:
-    print(row)
-
-def export_bad_inputs(data_object, outdir="."):
-    # bad renewable pmax values in representative data
+def export_bad_inputs(data_object, outdir: Path):
     bad_renew_rows = []
     for gen in data_object.md.data["elements"]["generator"]:
         g = data_object.md.data["elements"]["generator"][gen]
@@ -404,11 +267,10 @@ def export_bad_inputs(data_object, outdir="."):
                 })
 
     bad_renew_df = pd.DataFrame(bad_renew_rows)
-    bad_renew_path = f"{outdir}/bad_renewable_pmax.csv"
+    bad_renew_path = outdir / "bad_renewable_pmax.csv"
     bad_renew_df.to_csv(bad_renew_path, index=False)
-    print(f"Wrote renewable pmax diagnostics to {bad_renew_path}")
+    logger.info("Wrote renewable pmax diagnostics to %s", bad_renew_path)
 
-    # bad branch ratings in base md
     bad_branch_rows = []
     for br, b in data_object.md.data["elements"].get("branch", {}).items():
         for key in ["rating_long_term", "rating_short_term", "rating_emergency"]:
@@ -423,172 +285,166 @@ def export_bad_inputs(data_object, outdir="."):
                 })
 
     bad_branch_df = pd.DataFrame(bad_branch_rows)
-    bad_branch_path = f"{outdir}/bad_branch_ratings.csv"
+    bad_branch_path = outdir / "bad_branch_ratings.csv"
     bad_branch_df.to_csv(bad_branch_path, index=False)
-    print(f"Wrote branch rating diagnostics to {bad_branch_path}")
-        
-export_bad_inputs(data_object, dir_name)
+    logger.info("Wrote branch rating diagnostics to %s", bad_branch_path)
 
-###############################################################################
-# OPTIONAL COST DATA FOR CANDIDATE GENERATORS
-###############################################################################
 
-data_processing_object = None
+def log_converter_fill_reports(data_path: Path):
+    md = data_path / "metadata"
 
-if include_candidate_cost_data:
-    print("Loading candidate generator cost data...")
+    for fname in [
+        "branch_rating_fills.csv",
+        "dc_branch_rating_fills.csv",
+        "renewable_timeseries_fallbacks.csv",
+    ]:
+        fpath = md / fname
+        if fpath.exists():
+            try:
+                df = pd.read_csv(fpath)
+                logger.info("Converter fill report %s rows=%s", fname, len(df))
+                if len(df) > 0:
+                    logger.info("First few rows of %s:\n%s", fname, df.head(10).to_string(index=False))
+            except Exception as e:
+                logger.warning("Could not read %s: %s", fpath, e)
 
-    data_processing_object = DataProcessing()
 
-    # Keep this close to your original usage, but depending on your local
-    # DataProcessing implementation, you may need to use the simpler call:
-    #
-    # data_processing_object.load_gen_data(
-    #     bus_data_path,
-    #     cost_data_path,
-    #     ng_cost_path,
-    #     candidate_gens,
-    # )
-    #
-    # The version below assumes your local DataProcessing supports the
-    # additional keyword arguments used in the attached driver_naerm.py.
-    data_processing_object.load_gen_data(
-        bus_data_path=bus_data_path,
-        cost_data_path=cost_data_path,
-        # ng_cost_path=ng_cost_path,
-        candidate_gens=candidate_gens,
-        save_csv=False,
-        candidate_gen_csv_path=gen_csv_path,
-        candidate_storage_csv_path=storage_csv_path,
-        candidate_branch_csv_path=branch_csv_path,
+# ---------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------
+
+def main():
+    log_case_path_info(DATA_PATH)
+
+    rep_days = REP_DAYS
+    rep_weights = REP_WEIGHTS
+
+    logger.info("Creating ExpansionPlanningData object...")
+    data_object = ExpansionPlanningData(
+        stages=1,
+        num_reps=4,
+        len_reps=24,
+        num_commit=24,
+        num_dispatch=1,
     )
 
-    print("Candidate generation cost data loaded.")
+    logger.info("Loading Prescient case...")
+    data_object.load_prescient(
+        str(DATA_PATH),
+        representative_dates=rep_days,
+        representative_weights=rep_weights,
+        options_dict={
+            "data_path": str(DATA_PATH),
+            "num_days": 365,
+            "ruc_horizon": 36,
+            "start_date": "2030-01-01",
+            "sced_frequency_minutes": 60,
+        },
+    )
 
-###############################################################################
-# BUILD GTEP MODEL
-###############################################################################
+    logger.info("Prescient case loaded successfully.")
+    logger.info("data_object.num_reps = %s", getattr(data_object, "num_reps", None))
+    logger.info("len(rep_days) = %s", len(rep_days))
+    logger.info("len(rep_weights) = %s", len(rep_weights))
+    logger.info("len(representative_data) = %s", len(data_object.representative_data))
 
-# Check specific bad generator
-gname = "MilnerButteL_9aab36f6"
-for i, rep in enumerate(data_object.representative_data):
-    if gname in rep.data["elements"]["generator"]:
-        print("rep", i, gname, rep.data["elements"]["generator"][gname].get("p_max"))
+    # Defensive trim if local period logic created extras
+    if len(data_object.representative_data) != len(rep_days):
+        logger.warning(
+            "Representative period count mismatch: built %s, expected %s. Trimming.",
+            len(data_object.representative_data),
+            len(rep_days),
+        )
+        data_object.representative_data = data_object.representative_data[: len(rep_days)]
 
-# Check specific bad branch
-bname = "10289_10558_1"
-if bname in data_object.md.data["elements"]["branch"]:
-    print("branch", bname, data_object.md.data["elements"]["branch"][bname])
+    logger.info("Final representative_data length = %s", len(data_object.representative_data))
 
-sanitize_loaded_md(data_object.md, data_object.representative_data)
+    # Log representative period boundaries
+    for i, rep in enumerate(data_object.representative_data):
+        try:
+            keys = rep.data["system"]["time_keys"]
+            logger.info("rep %s start=%s end=%s", i, keys[0], keys[-1])
+        except Exception:
+            logger.info("rep %s unable to report time_keys", i)
 
-# Check specific bad generator
-gname = "MilnerButteL_9aab36f6"
-for i, rep in enumerate(data_object.representative_data):
-    if gname in rep.data["elements"]["generator"]:
-        print("rep", i, gname, rep.data["elements"]["generator"][gname].get("p_max"))
+    # Log converter-side fill reports
+    log_converter_fill_reports(DATA_PATH)
 
-# Check specific bad branch
-bname = "10289_10558_1"
-if bname in data_object.md.data["elements"]["branch"]:
-    print("branch", bname, data_object.md.data["elements"]["branch"][bname])
+    # Export bad inputs BEFORE sanitation
+    export_bad_inputs(data_object, OUTPUT_DIR)
 
-print("Creating ExpansionPlanningModel...")
+    # Apply sanitation
+    sanitize_loaded_md(data_object.md, data_object.representative_data)
+    logger.info("Applied sanitize_loaded_md()")
 
-mod_object = ExpansionPlanningModel(
-    data=data_object,
-    cost_data=data_processing_object,
-)
+    # Export bad inputs AFTER sanitation
+    export_bad_inputs(data_object, OUTPUT_DIR)
 
-mod_object.config["include_investment"] = False
-mod_object.config["include_commitment"] = False
-mod_object.config["include_redispatch"] = True
-mod_object.config["scale_loads"] = False
-mod_object.config["transmission"] = True
-mod_object.config["storage"] = False
-mod_object.config["flow_model"] = "transport"
-mod_object.config["advanced_hydro"] = False
+    # Targeted diagnostics
+    bad_gen = "MilnerButteL_9aab36f6"
+    if bad_gen in data_object.md.data["elements"]["generator"]:
+        for i, rep in enumerate(data_object.representative_data):
+            if bad_gen in rep.data["elements"]["generator"]:
+                logger.info(
+                    "rep %s %s p_max=%s",
+                    i,
+                    bad_gen,
+                    rep.data["elements"]["generator"][bad_gen].get("p_max"),
+                )
 
-# Save config
-config_csv_path = f"{dir_name}/model_config.csv"
-with open(config_csv_path, mode="w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["config_key", "config_value", "value_type"])
-    for key, value in sorted(mod_object.config.items()):
-        writer.writerow([key, repr(value), type(value).__name__])
+    bad_branch = "10289_10558_1"
+    if bad_branch in data_object.md.data["elements"]["branch"]:
+        logger.info(
+            "branch %s data=%s",
+            bad_branch,
+            data_object.md.data["elements"]["branch"][bad_branch],
+        )
 
-print(f"Saved model configuration to: {config_csv_path}")
+    logger.info("Creating ExpansionPlanningModel...")
+    mod_object = ExpansionPlanningModel(
+        data=data_object,
+        cost_data=None,
+    )
 
-print("Building model...")
-mod_object.create_model()
-print("Model created.")
+    mod_object.config["include_investment"] = True
+    mod_object.config["include_commitment"] = False
+    mod_object.config["include_redispatch"] = True
+    mod_object.config["scale_loads"] = False
+    mod_object.config["transmission"] = True
+    mod_object.config["storage"] = True
+    mod_object.config["flow_model"] = "transport"
+    mod_object.config["advanced_hydro"] = True
 
-###############################################################################
-# GDP TRANSFORMATION
-###############################################################################
+    # Save config
+    config_csv_path = OUTPUT_DIR / "model_config.csv"
+    with open(config_csv_path, mode="w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["config_key", "config_value", "value_type"])
+        for key, value in sorted(mod_object.config.items()):
+            writer.writerow([key, repr(value), type(value).__name__])
+    logger.info("Saved model configuration to %s", config_csv_path)
 
-print("Applying GDP transformation...")
-pyo.TransformationFactory("gdp.bigm").apply_to(mod_object.model)
-print("Model transformed.")
+    logger.info("Building model...")
+    mod_object.create_model()
+    logger.info("Model created.")
 
-###############################################################################
-# SOLVER
-###############################################################################
+    logger.info("Applying GDP big-M transformation...")
+    pyo.TransformationFactory("gdp.bigm").apply_to(mod_object.model)
+    logger.info("GDP transformation complete.")
 
-solver = "gurobi"
-# solver = "highs"
-solver = "xpress"
+    logger.info("Selecting solver: %s", SOLVER_NAME)
+    if SOLVER_NAME == "gurobi":
+        opt = pyo.SolverFactory("gurobi")
+    elif SOLVER_NAME == "highs":
+        opt = pyo.SolverFactory("highs")
+    else:
+        raise ValueError(f"Unsupported solver: {SOLVER_NAME}")
 
-if solver == "gurobi":
-    opt = pyo.SolverFactory("gurobi")
-elif solver == "highs":
-    opt = pyo.SolverFactory("highs")
-elif solver == "xpress":
-    opt = pyo.SolverFactory("xpress")
-    # If using xpress, uncomment:
-    xpress.init("naerm_xpauth.xpr")
-else:
-    raise ValueError(f"Unsupported solver: {solver}")
+    logger.info("Solving model...")
+    mod_object.results = opt.solve(mod_object.model, tee=True)
+    logger.info("Solve complete.")
+    logger.info("%s", mod_object.results)
 
-print(f"Solving with {solver}...")
 
-mod_object.results = opt.solve(
-    mod_object.model,
-    tee=True,
-)
-
-print(mod_object.results)
-
-###############################################################################
-# SAVE RESULTS
-###############################################################################
-
-# Only execute if solve succeeds far enough for solution extraction
-try:
-    sol_object = ExpansionPlanningSolution(data_path)
-    sol_object.save_results_in_json_files(mod_object, dir_name)
-
-    # Plot generation mix if desired
-    plot_type = "all"
-
-    case_json = "dispatchables"
-    sol_object.create_plots(case_json, dir_name, data_path, plot_type)
-
-    case_json = "renewables"
-    sol_object.create_plots(case_json, dir_name, data_path, plot_type)
-
-    case_json = "combined"
-    sol_object.create_plots(case_json, dir_name, data_path, plot_type)
-
-    # Representative day stackgraph examples for 2030
-    day_hour_list = [
-        ("2030-07-05 00:00", 18),
-        ("2030-10-14 00:00", 4),
-    ]
-    sol_object.create_stackgraph_and_metrics(dir_name, rep_days, day_hour_list)
-
-except Exception as e:
-    print("Post-processing / solution export failed.")
-    print(f"Error: {e}")
-
-pass
+if __name__ == "__main__":
+    main()

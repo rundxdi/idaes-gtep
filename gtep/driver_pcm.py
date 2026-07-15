@@ -343,6 +343,87 @@ for gen in data_object.md.data["elements"]["generator"]:
 print(f"Found {len(bad)} bad renewable representative-series cases")
 for row in bad[:100]:
     print(row)
+
+def export_bad_inputs(data_object, outdir="."):
+    # bad renewable pmax values in representative data
+    bad_renew_rows = []
+    for gen in data_object.md.data["elements"]["generator"]:
+        g = data_object.md.data["elements"]["generator"][gen]
+        if g.get("generator_type") != "renewable":
+            continue
+
+        for i, rep in enumerate(data_object.representative_data):
+            try:
+                pmax = rep.data["elements"]["generator"][gen].get("p_max")
+                if not isinstance(pmax, dict):
+                    bad_renew_rows.append({
+                        "GEN UID": gen,
+                        "rep_period": i,
+                        "issue": f"p_max not dict: {type(pmax)}",
+                    })
+                    continue
+
+                vals = pmax.get("values")
+                if vals is None:
+                    bad_renew_rows.append({
+                        "GEN UID": gen,
+                        "rep_period": i,
+                        "issue": "missing values field",
+                    })
+                    continue
+
+                if len(vals) == 0:
+                    bad_renew_rows.append({
+                        "GEN UID": gen,
+                        "rep_period": i,
+                        "issue": "empty values",
+                    })
+                    continue
+
+                if all(v is None or (isinstance(v, float) and math.isnan(v)) for v in vals):
+                    bad_renew_rows.append({
+                        "GEN UID": gen,
+                        "rep_period": i,
+                        "issue": "all NaN/None",
+                    })
+                    continue
+
+                if any(v is None or (isinstance(v, float) and math.isnan(v)) for v in vals):
+                    bad_renew_rows.append({
+                        "GEN UID": gen,
+                        "rep_period": i,
+                        "issue": "partial NaN/None",
+                    })
+            except Exception as e:
+                bad_renew_rows.append({
+                    "GEN UID": gen,
+                    "rep_period": i,
+                    "issue": f"error: {e}",
+                })
+
+    bad_renew_df = pd.DataFrame(bad_renew_rows)
+    bad_renew_path = f"{outdir}/bad_renewable_pmax.csv"
+    bad_renew_df.to_csv(bad_renew_path, index=False)
+    print(f"Wrote renewable pmax diagnostics to {bad_renew_path}")
+
+    # bad branch ratings in base md
+    bad_branch_rows = []
+    for br, b in data_object.md.data["elements"].get("branch", {}).items():
+        for key in ["rating_long_term", "rating_short_term", "rating_emergency"]:
+            v = b.get(key)
+            if v is None or (isinstance(v, float) and math.isnan(v)):
+                bad_branch_rows.append({
+                    "branch": br,
+                    "field": key,
+                    "from_bus": b.get("from_bus"),
+                    "to_bus": b.get("to_bus"),
+                    "value": v,
+                })
+
+    bad_branch_df = pd.DataFrame(bad_branch_rows)
+    bad_branch_path = f"{outdir}/bad_branch_ratings.csv"
+    bad_branch_df.to_csv(bad_branch_path, index=False)
+    print(f"Wrote branch rating diagnostics to {bad_branch_path}")
         
 
 ###############################################################################

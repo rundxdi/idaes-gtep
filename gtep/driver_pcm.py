@@ -23,6 +23,8 @@ from gtep.gtep_data import ExpansionPlanningData
 from gtep.gtep_solution import ExpansionPlanningSolution
 from gtep.gtep_data_processing import DataProcessing
 
+import pandas as pd
+
 # Optional if using xpress
 import xpress
 

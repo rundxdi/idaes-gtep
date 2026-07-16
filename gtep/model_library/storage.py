@@ -1015,8 +1015,8 @@ def add_dispatch_storage_variables_and_constraints(m, b):
             # If this is the first dispatch period of the first
             # commitment period, use the initial state of charge from
             # data.
-            # previous_soc = m.initStorageChargeLevel[bat]
-            previous_soc = m.storageCapacity[bat] / 2
+            previous_soc = m.initStorageChargeLevel[bat]
+            #previous_soc = m.storageCapacity[bat] / 2
 
         return b.storageChargeLevel[bat] == (
             m.storageRetentionRate[bat] * previous_soc

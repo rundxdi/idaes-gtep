@@ -38,8 +38,7 @@ def add_storage_params(m):
         units=u.MW * u.hr,
         doc="Maximum storage capacity in MWh",
     )
-    m.storageCapacity.pprint()
-    raise SystemExit
+
     m.initStorageChargeLevel = pyo.Param(
         m.storage,
         initialize={

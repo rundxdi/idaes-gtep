@@ -406,14 +406,14 @@ def main():
         cost_data=None,
     )
 
-    mod_object.config["include_investment"] = True
+    mod_object.config["include_investment"] = False
     mod_object.config["include_commitment"] = False
     mod_object.config["include_redispatch"] = True
     mod_object.config["scale_loads"] = False
     mod_object.config["transmission"] = True
     mod_object.config["storage"] = True
     mod_object.config["flow_model"] = "transport"
-    mod_object.config["advanced_hydro"] = True
+    mod_object.config["advanced_hydro"] = False
 
     config_csv_path = OUTPUT_DIR / "model_config.csv"
     with open(config_csv_path, mode="w", newline="") as f:

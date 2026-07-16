@@ -329,9 +329,9 @@ def main():
     logger.info("Creating ExpansionPlanningData object...")
     data_object = ExpansionPlanningData(
         stages=1,
-        num_reps=4,
-        len_reps=24,
-        num_commit=24,
+        num_reps=1,
+        len_reps=1,
+        num_commit=1,
         num_dispatch=1,
     )
 

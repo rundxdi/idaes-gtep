@@ -330,8 +330,8 @@ def main():
     data_object = ExpansionPlanningData(
         stages=1,
         num_reps=1,
-        len_reps=1,
-        num_commit=1,
+        len_reps=24,
+        num_commit=24,
         num_dispatch=1,
     )
 

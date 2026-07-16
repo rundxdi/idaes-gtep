@@ -314,9 +314,9 @@ def add_storage_cost_parameters_from_csv(m, year):
             for _, row in m.mc.storage_data_target.iterrows()
         }
 
-    for storage in m.storage:
-        if storage in new_storage_lifetimes:
-            m.storageLifetimes[storage] = new_storage_lifetimes[storage]
+        for storage in m.storage:
+            if storage in new_storage_lifetimes:
+                m.storageLifetimes[storage] = new_storage_lifetimes[storage]
 
     # Re-populate the investment cost parameters for storage units
     # since we have available capex data in m.mc modeling

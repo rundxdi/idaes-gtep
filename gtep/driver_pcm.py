@@ -52,7 +52,7 @@ REP_DAYS = [
     "2030-07-05 00:00:00",
     "2030-10-14 00:00:00",
 ]
-REP_WEIGHTS = [1, 1, 1, 1]
+REP_WEIGHTS = [183, 182, 1, 1]
 
 OUTPUT_DIR = Path("./GTEP_2030_run")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

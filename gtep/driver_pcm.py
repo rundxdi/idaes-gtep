@@ -431,11 +431,11 @@ def main():
     pyo.TransformationFactory("gdp.bigm").apply_to(mod_object.model)
     logger.info("GDP transformation complete.")
 
-    from pyomo.contrib.iis import write_iis
+    # from pyomo.contrib.iis import write_iis
 
-    # 'instance' is your built/instantiated Pyomo model
-    # 'solver' can be "gurobi", "cplex", or "xpress"
-    write_iis(mod_object.model, iis_file_name="model_iis.ilp", solver="gurobi")
+    # # 'instance' is your built/instantiated Pyomo model
+    # # 'solver' can be "gurobi", "cplex", or "xpress"
+    # write_iis(mod_object.model, iis_file_name="model_iis.ilp", solver="gurobi")
 
     logger.info("Selecting solver: %s", SOLVER_NAME)
     if SOLVER_NAME == "gurobi":

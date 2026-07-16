@@ -307,11 +307,12 @@ def add_storage_cost_parameters_from_csv(m, year):
 
     # Re-populating lifetimes parameters for branches and generators
     # since we have data in the m.mc model object.
-    lifetime_col = f"lifetime_{year}"
-    new_storage_lifetimes = {
-        row["name"]: int(row.get(lifetime_col, 0) if pd.notna(row[lifetime_col]) else 3)
-        for _, row in m.mc.storage_data_target.iterrows()
-    }
+    if m.mc is not None:
+        lifetime_col = f"lifetime_{year}"
+        new_storage_lifetimes = {
+            row["name"]: int(row.get(lifetime_col, 0) if pd.notna(row[lifetime_col]) else 3)
+            for _, row in m.mc.storage_data_target.iterrows()
+        }
 
     for storage in m.storage:
         if storage in new_storage_lifetimes:

@@ -398,7 +398,7 @@ class ExpansionPlanningSolution:
         for var in m.component_objects(gdp.Disjunct, descend_into=True):
             for index in var:
                 for name in valid_names:
-                    if name in var.name:
+                    if name in var.name and "stor" not in var.name:
                         if pyo.value(var[index].indicator_var) == True:
                             dispatchable_investments[var.name + "." + str(index)] = (
                                 pyo.value(var[index].indicator_var)
